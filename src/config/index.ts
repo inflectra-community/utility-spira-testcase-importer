@@ -1,0 +1,132 @@
+/**
+ * Configuration loader and validator.
+ * Loads configuration from CLI arguments with environment variable fallbacks,
+ * validates using Zod schemas, and checks file path existence.
+ */
+
+import fs from 'node:fs';
+import { ZodError } from 'zod';
+import {
+  ImporterConfigSchema,
+  type ImporterConfig,
+  type LLMConfig,
+} from '../types/config.js';
+
+/**
+ * CLI arguments as parsed by Commander.js.
+ * All fields are optional since environment variables can provide fallbacks.
+ */
+export interface CliArgs {
+  spiraUrl?: string;
+  username?: string;
+  apiKey?: string;
+  projectId?: number;
+  provider?: 'openai' | 'anthropic' | 'bedrock';
+  model?: string;
+  llmApiKey?: string;
+  region?: string;
+  sourceFile?: string;
+  dryRun?: boolean;
+  logFile?: string;
+}
+
+/**
+ * Loads and validates importer configuration by merging CLI arguments
+ * with environment variable fallbacks.
+ *
+ * Priority: CLI args > Environment variables
+ *
+ * Environment variable mappings:
+ * - SPIRA_URL → spira.baseUrl
+ * - SPIRA_USERNAME → spira.username
+ * - SPIRA_API_KEY → spira.apiKey
+ * - LLM_API_KEY → llm.apiKey
+ * - AWS_REGION → llm.region
+ */
+export function loadConfig(cliArgs: CliArgs): ImporterConfig {
+  const spira: Record<string, unknown> = {
+    baseUrl: cliArgs.spiraUrl ?? process.env.SPIRA_URL,
+    username: cliArgs.username ?? process.env.SPIRA_USERNAME,
+    apiKey: cliArgs.apiKey ?? process.env.SPIRA_API_KEY,
+    projectId: cliArgs.projectId,
+  };
+
+  const llm: Record<string, unknown> = {
+    provider: cliArgs.provider,
+    model: cliArgs.model,
+    apiKey: cliArgs.llmApiKey ?? process.env.LLM_API_KEY,
+    region: cliArgs.region ?? process.env.AWS_REGION,
+  };
+
+  const rawConfig = {
+    spira,
+    llm,
+    sourceFile: cliArgs.sourceFile,
+    dryRun: cliArgs.dryRun ?? false,
+    logFile: cliArgs.logFile,
+  };
+
+  // Validate with Zod schemas
+  const parseResult = ImporterConfigSchema.safeParse(rawConfig);
+
+  if (!parseResult.success) {
+    throw new ConfigValidationError(formatZodError(parseResult.error));
+  }
+
+  const config = parseResult.data;
+
+  // Validate source file exists on disk
+  if (!fs.existsSync(config.sourceFile)) {
+    throw new ConfigValidationError(
+      `Source file not found: "${config.sourceFile}". Please provide a valid path to an Excel file.`
+    );
+  }
+
+  // Validate LLM provider-specific requirements
+  validateLLMProviderConfig(config.llm);
+
+  return config;
+}
+
+/**
+ * Validates that provider-specific fields are present.
+ * - OpenAI/Anthropic require an apiKey
+ * - Bedrock requires a region
+ */
+function validateLLMProviderConfig(llm: LLMConfig): void {
+  if ((llm.provider === 'openai' || llm.provider === 'anthropic') && !llm.apiKey) {
+    throw new ConfigValidationError(
+      `LLM API key is required for provider "${llm.provider}". ` +
+        `Set it via --llm-api-key or the LLM_API_KEY environment variable.`
+    );
+  }
+
+  if (llm.provider === 'bedrock' && !llm.region) {
+    throw new ConfigValidationError(
+      `AWS region is required for the "bedrock" provider. ` +
+        `Set it via --region or the AWS_REGION environment variable.`
+    );
+  }
+}
+
+/**
+ * Formats Zod validation errors into user-friendly messages.
+ */
+function formatZodError(error: ZodError): string {
+  const issues = error.issues.map((issue) => {
+    const path = issue.path.join('.');
+    return `  - ${path ? path + ': ' : ''}${issue.message}`;
+  });
+
+  return `Configuration validation failed:\n${issues.join('\n')}`;
+}
+
+/**
+ * Custom error class for configuration validation failures.
+ */
+export class ConfigValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigValidationError';
+  }
+}

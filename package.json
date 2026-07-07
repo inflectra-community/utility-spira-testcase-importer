@@ -1,0 +1,41 @@
+{
+  "name": "spira-test-case-importer",
+  "version": "0.1.0",
+  "description": "LLM-assisted test case importer for Spira",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "spira-import": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "spira",
+    "test-cases",
+    "importer",
+    "llm"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^4.0.121",
+    "@ai-sdk/anthropic": "^3.0.86",
+    "@ai-sdk/openai": "^3.0.74",
+    "@inquirer/prompts": "^8.5.2",
+    "ai": "^6.0.209",
+    "commander": "^15.0.0",
+    "exceljs": "^4.4.0",
+    "inquirer": "^14.0.2",
+    "typescript": "^6.0.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.10",
+    "@types/node": "^26.0.0",
+    "fast-check": "^4.8.0",
+    "vitest": "^4.1.9"
+  }
+}
