@@ -10,12 +10,13 @@ import { Command } from 'commander';
 import { loadConfig, ConfigValidationError, type CliArgs } from './config/index.js';
 import { createLogger } from './logger/index.js';
 import { runPipeline } from './pipeline.js';
+import { createStrategy, getSupportedArtifactTypes } from './strategies/index.js';
 
 const program = new Command();
 
 program
   .name('spira-import')
-  .description('LLM-assisted test case importer for Spira')
+  .description('LLM-assisted artifact importer for Spira (test cases, requirements, and more)')
   .version('0.1.0')
   .requiredOption('--source-file <path>', 'Path to the Excel file containing test case data')
   .requiredOption('--provider <provider>', 'LLM provider: openai, anthropic, or bedrock')
@@ -28,6 +29,7 @@ program
   .option('--region <region>', 'AWS region for Bedrock provider (env: AWS_REGION)')
   .option('--dry-run', 'Validate and transform without importing to Spira', false)
   .option('--log-file <path>', 'Custom log file output path')
+  .option('--artifact-type <type>', `Artifact type to import: ${getSupportedArtifactTypes().join(', ')}`, 'test-case')
   .action(async (options) => {
     const logger = createLogger();
 
@@ -48,7 +50,8 @@ program
 
       const config = loadConfig(cliArgs);
 
-      await runPipeline(config, logger);
+      const strategy = createStrategy(options.artifactType);
+      await runPipeline(config, logger, { strategy });
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         process.stderr.write(`\n❌ Configuration Error:\n${error.message}\n\n`);

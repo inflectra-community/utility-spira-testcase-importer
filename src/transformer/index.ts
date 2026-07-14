@@ -1,6 +1,11 @@
 /**
  * Data Transformer - Applies confirmed mappings to source rows,
  * producing Spira-ready TransformedTestCase objects.
+ *
+ * The transformer is strategy-aware: it accepts an optional set of known standard
+ * field names to determine which target fields map to artifact properties vs
+ * custom properties. When no field names are provided, it uses the built-in
+ * test case field map for backward compatibility.
  */
 
 import type {
@@ -18,6 +23,7 @@ import type {
   TransformationError,
   TransformationWarning,
 } from '../types/transform.js';
+import type { FieldDefinition } from '../types/strategy.js';
 
 export interface DataTransformer {
   transform(
@@ -25,6 +31,16 @@ export interface DataTransformer {
     mapping: MappingResult,
     metadata: TemplateMetadata
   ): TransformationResult;
+}
+
+/**
+ * Configuration for the data transformer.
+ * When fieldDefinitions are provided, the transformer uses them to determine
+ * which target fields are standard artifact fields vs custom properties.
+ */
+export interface DataTransformerConfig {
+  /** Strategy field definitions — if provided, replaces the hardcoded STANDARD_FIELD_MAP */
+  fieldDefinitions?: FieldDefinition[];
 }
 
 /**
@@ -189,6 +205,7 @@ function extractInlineTestSteps(
 
 /**
  * Known standard Spira test case fields and where to assign their values.
+ * This is the default field map used when no strategy field definitions are provided.
  */
 const STANDARD_FIELD_MAP: Record<string, string> = {
   name: 'name',
@@ -199,6 +216,18 @@ const STANDARD_FIELD_MAP: Record<string, string> = {
   ownerid: 'ownerId',
   tags: 'tags',
 };
+
+/**
+ * Builds a standard field map from strategy field definitions.
+ * Maps lowercase field name → canonical field name for assignment.
+ */
+function buildFieldMapFromDefinitions(definitions: FieldDefinition[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const def of definitions) {
+    map[def.name.toLowerCase()] = def.name;
+  }
+  return map;
+}
 
 /**
  * Determines if a target field is a custom property by checking against metadata.
@@ -225,7 +254,8 @@ function transformRow(
   mapping: MappingResult,
   metadata: TemplateMetadata,
   errors: TransformationError[],
-  warnings: TransformationWarning[]
+  warnings: TransformationWarning[],
+  fieldMap: Record<string, string>,
 ): TransformedTestCase {
   const testCase: TransformedTestCase = {
     sourceRowIndex: rowIndex,
@@ -269,7 +299,7 @@ function transformRow(
     }
 
     // Assign transformed value to the correct field
-    assignFieldValue(testCase, fieldMapping, transformedValue, metadata, rowIndex, errors);
+    assignFieldValue(testCase, fieldMapping, transformedValue, metadata, rowIndex, errors, fieldMap);
   }
 
   // Extract folder path if configured
@@ -304,14 +334,15 @@ function assignFieldValue(
   value: string | number | boolean | null,
   metadata: TemplateMetadata,
   rowIndex: number,
-  errors: TransformationError[]
+  errors: TransformationError[],
+  fieldMap: Record<string, string>,
 ): void {
   if (value === null) {
     return;
   }
 
   const targetLower = fieldMapping.targetField.toLowerCase();
-  const standardField = STANDARD_FIELD_MAP[targetLower];
+  const standardField = fieldMap[targetLower];
 
   if (standardField) {
     switch (standardField) {
@@ -417,7 +448,8 @@ function extractFolderPath(
 function transformSeparateRowsMode(
   rows: Record<string, unknown>[],
   mapping: MappingResult,
-  metadata: TemplateMetadata
+  metadata: TemplateMetadata,
+  fieldMap: Record<string, string>,
 ): TransformationResult {
   const errors: TransformationError[] = [];
   const warnings: TransformationWarning[] = [];
@@ -443,7 +475,7 @@ function transformSeparateRowsMode(
       if (currentTestCase) {
         testCases.push(currentTestCase);
       }
-      currentTestCase = transformRow(row, i, mapping, metadata, errors, warnings);
+      currentTestCase = transformRow(row, i, mapping, metadata, errors, warnings, fieldMap);
 
       // Also extract a step from this row if step columns are present
       const step = extractStepFromRow(row, stepConfig);
@@ -510,8 +542,16 @@ function extractStepFromRow(
 
 /**
  * Creates and returns a DataTransformer implementation.
+ *
+ * @param config - Optional configuration. If fieldDefinitions are provided,
+ *                 they replace the built-in test-case field map.
  */
-export function createDataTransformer(): DataTransformer {
+export function createDataTransformer(config?: DataTransformerConfig): DataTransformer {
+  // Build the effective field map
+  const fieldMap = config?.fieldDefinitions
+    ? buildFieldMapFromDefinitions(config.fieldDefinitions)
+    : STANDARD_FIELD_MAP;
+
   return {
     transform(
       rows: Record<string, unknown>[],
@@ -520,7 +560,7 @@ export function createDataTransformer(): DataTransformer {
     ): TransformationResult {
       // If separate-rows mode, use the grouping logic
       if (mapping.testStepMapping?.mode === 'separate-rows') {
-        return transformSeparateRowsMode(rows, mapping, metadata);
+        return transformSeparateRowsMode(rows, mapping, metadata, fieldMap);
       }
 
       // Standard mode: one test case per row
@@ -535,7 +575,8 @@ export function createDataTransformer(): DataTransformer {
           mapping,
           metadata,
           errors,
-          warnings
+          warnings,
+          fieldMap,
         );
         testCases.push(testCase);
       }

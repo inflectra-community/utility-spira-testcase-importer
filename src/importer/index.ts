@@ -1,12 +1,12 @@
 /**
- * Import Engine — orchestrates per-record test case injection into Spira
+ * Import Engine — orchestrates per-record artifact injection into Spira
  * with progress tracking, resilient error handling, dry-run mode, and graceful shutdown.
  *
  * Per-record flow:
- *   1. Resolve folder path → TestCaseFolderId (via Folder Resolver)
- *   2. Create test case via Spira API
- *   3. Add test steps to the created test case
- *   4. Custom properties are set inline during test case creation
+ *   1. Resolve folder path → FolderId (via Folder Resolver)
+ *   2. Create artifact via Spira API (strategy-driven or built-in test case logic)
+ *   3. Add sub-items (test steps, etc.) to the created artifact
+ *   4. Custom properties are set inline during artifact creation
  *
  * Requirements: 7.1, 7.2, 7.4, 7.5, 7.6, 9.1, 9.4
  */
@@ -21,6 +21,7 @@ import type {
   CreateTestCaseRequest,
   CreateTestStepRequest,
 } from '../types/import.js';
+import type { ArtifactStrategy } from '../types/strategy.js';
 import { createFolderResolver, type FolderResolver } from './folder-resolver.js';
 import { serializeCustomProperty } from '../transformer/custom-property-serializer.js';
 
@@ -56,6 +57,8 @@ export interface ImportEngineConfig {
   existingFolders: TestCaseFolder[];
   customPropertyDefinitions: CustomPropertyDefinition[];
   pathSeparator?: string;
+  /** When provided, delegates artifact creation to the strategy instead of built-in test case logic. */
+  strategy?: ArtifactStrategy;
 }
 
 /**
@@ -69,7 +72,7 @@ export interface ImportEngineConfig {
  * - Handles SIGINT/SIGTERM for graceful shutdown
  */
 export function createImportEngine(config: ImportEngineConfig): ImportEngine {
-  const { client, logger, existingFolders, customPropertyDefinitions, pathSeparator } = config;
+  const { client, logger, existingFolders, customPropertyDefinitions, pathSeparator, strategy } = config;
 
   async function importTestCases(
     testCases: TransformedTestCase[],
@@ -152,7 +155,11 @@ export function createImportEngine(config: ImportEngineConfig): ImportEngine {
       }
 
       try {
-        await importSingleTestCase(testCase, folderResolver, client, customPropertyDefinitions, logger);
+        if (strategy) {
+          await importSingleArtifact(testCase, folderResolver, client, customPropertyDefinitions, logger, strategy);
+        } else {
+          await importSingleTestCase(testCase, folderResolver, client, customPropertyDefinitions, logger);
+        }
         successCount++;
       } catch (err) {
         failureCount++;
@@ -257,6 +264,98 @@ async function importSingleTestCase(
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       throw new ImportPhaseError(`Test step creation failed: ${errorMessage}`, 'teststep');
+    }
+  }
+}
+
+/**
+ * Imports a single artifact using the strategy pattern.
+ * Strategy handles: request building, API creation, and sub-item creation.
+ */
+async function importSingleArtifact(
+  testCase: TransformedTestCase,
+  folderResolver: FolderResolver,
+  client: SpiraApiClient,
+  customPropertyDefinitions: CustomPropertyDefinition[],
+  logger: Logger,
+  strategy: ArtifactStrategy,
+): Promise<void> {
+  // Step 1: Resolve folder path to ID
+  let folderId: number | null = null;
+  try {
+    folderId = await folderResolver.resolve(testCase.folderPath);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    throw new ImportPhaseError(`Folder resolution failed: ${errorMessage}`, 'folder');
+  }
+
+  // Step 2: Serialize custom properties
+  const defsByNumber = new Map(
+    customPropertyDefinitions.map((d) => [d.propertyNumber, d]),
+  );
+  const serializedProperties = testCase.customProperties
+    .map((cp) => {
+      const definition = defsByNumber.get(cp.propertyNumber);
+      if (!definition) return null;
+      return serializeCustomProperty(cp, definition);
+    })
+    .filter((p): p is NonNullable<typeof p> => p !== null);
+
+  // Step 3: Build request via strategy
+  const artifact = {
+    sourceRowIndex: testCase.sourceRowIndex,
+    name: testCase.name,
+    fields: {
+      Name: testCase.name,
+      Description: testCase.description ?? null,
+      TestCasePriorityId: testCase.testCasePriorityId ?? null,
+      TestCaseStatusId: testCase.testCaseStatusId ?? null,
+      TestCaseTypeId: testCase.testCaseTypeId ?? null,
+      OwnerId: testCase.ownerId ?? null,
+      ComponentIds: testCase.componentIds ?? null,
+    } as Record<string, string | number | boolean | null>,
+    customProperties: testCase.customProperties.map(cp => ({
+      propertyNumber: cp.propertyNumber,
+      value: cp.value,
+    })),
+    subItems: testCase.testSteps.map(s => ({
+      description: s.description,
+      expectedResult: s.expectedResult,
+      sampleData: s.sampleData,
+      position: s.position,
+    })),
+    folderPath: testCase.folderPath,
+    tags: testCase.tags,
+  };
+
+  const request = strategy.buildCreateRequest(
+    artifact,
+    folderId,
+    customPropertyDefinitions,
+    serializedProperties,
+  );
+
+  // Step 4: Create artifact via strategy
+  let artifactId: number;
+  try {
+    artifactId = await strategy.createArtifact(client, request);
+    logger.info(`Created ${strategy.artifactTypeName} "${testCase.name}" (ID: ${artifactId})`, {
+      sourceRowIndex: testCase.sourceRowIndex,
+      artifactId,
+    });
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    throw new ImportPhaseError(`${strategy.artifactTypeName} creation failed: ${errorMessage}`, 'testcase');
+  }
+
+  // Step 5: Create sub-items via strategy
+  if (artifact.subItems.length > 0) {
+    try {
+      await strategy.createSubItems(client, artifactId, artifact.subItems);
+      logger.info(`Added ${artifact.subItems.length} sub-item(s) to ${strategy.artifactTypeName} ${artifactId}`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new ImportPhaseError(`Sub-item creation failed: ${errorMessage}`, 'teststep');
     }
   }
 }

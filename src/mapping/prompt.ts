@@ -4,10 +4,180 @@
  * Builds a structured prompt that includes Spira field definitions,
  * custom property definitions with list values, source column headers,
  * and sample data rows — instructing the LLM to produce a MappingResult.
+ *
+ * Supports two modes:
+ * 1. Legacy: buildMappingPrompt() — hardcoded for test cases, uses TemplateMetadata
+ * 2. Strategy-aware: buildMappingPromptFromStrategy() — uses ArtifactStrategy metadata
  */
 
 import type { TemplateMetadata, CustomPropertyDefinition, CustomListValue } from '../types/spira.js';
 import type { SheetData } from '../parser/index.js';
+import type { ArtifactMetadata, FieldDefinition, FieldLookup } from '../types/strategy.js';
+
+/**
+ * Configuration for building a strategy-aware mapping prompt.
+ */
+export interface StrategyPromptConfig {
+  /** The artifact type display name (e.g., "Test Cases", "Requirements") */
+  displayName: string;
+  /** Standard field definitions from the strategy */
+  fieldDefinitions: FieldDefinition[];
+  /** The artifact metadata including lookups */
+  metadata: ArtifactMetadata;
+  /** Label for sub-items (e.g., "Test Steps") or null if none */
+  subItemLabel: string | null;
+}
+
+/**
+ * Builds a mapping prompt using strategy-provided field definitions and metadata.
+ * This is the extensible version that works for any artifact type.
+ */
+export function buildMappingPromptFromStrategy(
+  sheet: SheetData,
+  config: StrategyPromptConfig,
+  sampleRowCount: number = 5,
+): string {
+  const sections: string[] = [];
+
+  sections.push(buildStrategyInstructionSection(config.displayName, config.subItemLabel));
+  sections.push(buildStrategyFieldsSection(config.fieldDefinitions, config.metadata));
+  sections.push(buildStrategyCustomPropertiesSection(config.metadata));
+  sections.push(buildSourceDataSection(sheet, sampleRowCount));
+  sections.push(buildOutputFormatSection());
+
+  return sections.join('\n\n');
+}
+
+/**
+ * Builds the instruction section parameterized by artifact type.
+ */
+function buildStrategyInstructionSection(displayName: string, subItemLabel: string | null): string {
+  const subItemInstructions = subItemLabel
+    ? `\n\nAlso determine if the spreadsheet contains ${subItemLabel.toLowerCase()} and how they are structured (inline within a column, as separate rows, or not present).`
+    : '';
+
+  return `# Task: Map Spreadsheet Columns to Spira ${displayName} Fields
+
+You are an expert data mapping assistant. Your job is to analyze source spreadsheet columns and map them to the corresponding Spira ${displayName.toLowerCase()} fields.
+
+For each source column, determine:
+1. Which Spira target field it maps to (if any)
+2. The transform type: "direct" (copy as-is), "lookup" (map values to IDs), "template" (combine columns), or "ignore" (skip)
+3. For "lookup" transforms, provide the value mapping from source values to Spira IDs
+4. For "template" transforms, provide the template pattern using {column_name} placeholders${subItemInstructions}
+
+Also determine if there is a folder/category column that should define the folder hierarchy.`;
+}
+
+/**
+ * Builds the standard fields section from strategy field definitions and lookups.
+ */
+function buildStrategyFieldsSection(fieldDefinitions: FieldDefinition[], metadata: ArtifactMetadata): string {
+  const lines: string[] = [`# Spira Standard Fields`];
+
+  lines.push('');
+  lines.push('The following are the standard fields available:');
+  lines.push('');
+  lines.push('| Field | Type | Required | Description |');
+  lines.push('|-------|------|----------|-------------|');
+
+  for (const field of fieldDefinitions) {
+    lines.push(`| ${field.name} | ${field.type} | ${field.required ? 'Yes' : 'No'} | ${field.description} |`);
+  }
+
+  // Render each lookup table
+  for (const lookup of metadata.lookups) {
+    if (lookup.entries.length === 0) continue;
+
+    lines.push('');
+    lines.push(`## Available ${lookup.label}`);
+    lines.push('');
+    lines.push('| ID | Name | Active |');
+    lines.push('|----|------|--------|');
+    for (const entry of lookup.entries) {
+      lines.push(`| ${entry.id} | ${entry.name} | ${entry.active} |`);
+    }
+  }
+
+  // Users
+  if (metadata.users.length > 0) {
+    lines.push('');
+    lines.push('## Available Users (for OwnerId)');
+    lines.push('');
+    lines.push('| ID | Full Name | Username | Active |');
+    lines.push('|----|-----------|----------|--------|');
+    for (const u of metadata.users) {
+      lines.push(`| ${u.userId} | ${u.fullName} | ${u.userName} | ${u.active} |`);
+    }
+  }
+
+  // Components
+  if (metadata.components.length > 0) {
+    lines.push('');
+    lines.push('## Available Components');
+    lines.push('');
+    lines.push('| ID | Name | Active |');
+    lines.push('|----|------|--------|');
+    for (const c of metadata.components) {
+      lines.push(`| ${c.componentId} | ${c.name} | ${c.active} |`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Builds the custom properties section from strategy metadata.
+ */
+function buildStrategyCustomPropertiesSection(metadata: ArtifactMetadata): string {
+  const lines: string[] = ['# Custom Properties'];
+
+  if (metadata.customProperties.length === 0) {
+    lines.push('');
+    lines.push('No custom properties are defined for this artifact type in this project template.');
+    return lines.join('\n');
+  }
+
+  lines.push('');
+  lines.push('The following custom properties are defined:');
+  lines.push('');
+  lines.push('| Property # | Name | Type | Required | List ID |');
+  lines.push('|------------|------|------|----------|---------|');
+
+  for (const cp of metadata.customProperties) {
+    lines.push(
+      `| ${cp.propertyNumber} | ${cp.name} | ${cp.customPropertyTypeName} | ${cp.isRequired} | ${cp.customListId ?? 'N/A'} |`
+    );
+  }
+
+  // List values
+  const listProperties = metadata.customProperties.filter(
+    (cp) => cp.customListId != null
+  );
+
+  if (listProperties.length > 0) {
+    lines.push('');
+    lines.push('## Custom List Values');
+    lines.push('');
+    lines.push('For custom properties of type List or MultiList, the following values are valid:');
+
+    for (const cp of listProperties) {
+      const listValues = metadata.customLists.get(cp.customListId!);
+      if (!listValues || listValues.length === 0) continue;
+
+      lines.push('');
+      lines.push(`### ${cp.name} (Property #${cp.propertyNumber}, List ID: ${cp.customListId})`);
+      lines.push('');
+      lines.push('| Value ID | Name | Active |');
+      lines.push('|----------|------|--------|');
+      for (const lv of listValues) {
+        lines.push(`| ${lv.customPropertyValueId} | ${lv.name} | ${lv.active} |`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
 
 /**
  * Builds the LLM prompt that asks the model to map source spreadsheet columns

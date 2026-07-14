@@ -10,6 +10,10 @@
  * Phase 6: Generate and display Mapping Validation Report, require approval
  * Phase 7: Execute import (if approved and not dry-run)
  * Phase 8: Persist log file and display summary report
+ *
+ * The pipeline is strategy-aware: when an ArtifactStrategy is provided,
+ * it delegates artifact-specific behavior (metadata, prompt, validation, import)
+ * to the strategy. When no strategy is provided, the built-in test case flow runs.
  */
 
 import { select, input } from '@inquirer/prompts';
@@ -18,6 +22,7 @@ import type { Logger } from './logger/index.js';
 import type { TemplateMetadata } from './types/spira.js';
 import type { SheetData } from './parser/index.js';
 import type { MappingResult } from './types/mapping.js';
+import type { ArtifactStrategy } from './types/strategy.js';
 import { createSpiraClient } from './spira/client.js';
 import { fetchAllMetadata } from './spira/metadata.js';
 import { createExcelParser } from './parser/index.js';
@@ -28,9 +33,27 @@ import { generateValidationReport } from './report/index.js';
 import { createImportEngine } from './importer/index.js';
 
 /**
- * Runs the full import pipeline from authentication through to import/dry-run.
+ * Pipeline options including the optional strategy.
  */
-export async function runPipeline(config: ImporterConfig, logger: Logger): Promise<void> {
+export interface PipelineOptions {
+  /** When provided, drives all artifact-specific behavior in the pipeline. */
+  strategy?: ArtifactStrategy;
+}
+
+/**
+ * Runs the full import pipeline from authentication through to import/dry-run.
+ *
+ * @param config - Importer configuration (Spira creds, LLM settings, source file, etc.)
+ * @param logger - Logger instance
+ * @param options - Optional pipeline options including the artifact strategy
+ */
+export async function runPipeline(
+  config: ImporterConfig,
+  logger: Logger,
+  options?: PipelineOptions,
+): Promise<void> {
+  const strategy = options?.strategy;
+
   // Phase 1: Connect & Authenticate
   logger.info('Phase 1: Connecting to Spira...');
   const spiraClient = createSpiraClient(config.spira, logger);

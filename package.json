@@ -1,7 +1,7 @@
 {
   "name": "spira-test-case-importer",
   "version": "0.1.0",
-  "description": "LLM-assisted test case importer for Spira",
+  "description": "LLM-assisted test case importer for Spira (codename: Ogma)",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
@@ -11,6 +11,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js --import features/support/setup.ts",
     "lint": "tsc --noEmit"
   },
   "keywords": [
@@ -33,9 +34,13 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cucumber/cucumber": "^13.0.0",
+    "@cucumber/pretty-formatter": "^4.0.0",
     "@types/inquirer": "^9.0.10",
-    "@types/node": "^26.0.0",
+    "@types/node": "^26.1.0",
     "fast-check": "^4.8.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.23.1",
     "vitest": "^4.1.9"
   }
 }

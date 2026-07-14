@@ -1,13 +1,12 @@
 /**
- * Validation Engine — validates transformed test cases against Spira schema constraints.
+ * Validation Engine — validates transformed artifacts against Spira schema constraints.
  *
- * Validation rules:
- * - Required fields: Name must be non-empty
- * - TestCaseStatusId and TestCaseTypeId must reference valid template values
- * - TestCasePriorityId (if set) must reference an active priority
- * - OwnerId (if set) must reference an active project member
- * - Custom list/multilist values must match active entries
- * - Custom property values must match expected type
+ * The engine supports two modes:
+ * 1. Built-in test-case rules (backward compatible, no config needed)
+ * 2. Strategy-provided rules via ValidationEngineConfig
+ *
+ * Custom property validation (type checking, list value matching) is always applied
+ * regardless of mode — it's universal across all artifact types.
  */
 
 import type { TransformedTestCase } from '../types/transform.js';
@@ -17,6 +16,7 @@ import type {
   CustomListValue,
 } from '../types/spira.js';
 import type { ValidationError, ValidationResult } from '../types/validation.js';
+import type { ValidationRule, ArtifactMetadata, TransformedArtifact } from '../types/strategy.js';
 
 export interface ValidationEngine {
   validate(
@@ -26,10 +26,24 @@ export interface ValidationEngine {
 }
 
 /**
+ * Configuration for the validation engine.
+ * When externalRules are provided, they replace the built-in test-case-specific rules.
+ * Custom property validation is always applied regardless.
+ */
+export interface ValidationEngineConfig {
+  /** Strategy-provided validation rules. If set, replaces built-in artifact-specific rules. */
+  externalRules?: ValidationRule[];
+}
+
+/**
  * Creates a ValidationEngine that checks transformed test cases against
  * the Spira template metadata constraints.
+ *
+ * @param config - Optional configuration. If externalRules are provided,
+ *                 they replace the built-in test-case-specific rules.
+ *                 Custom property validation is always applied.
  */
-export function createValidationEngine(): ValidationEngine {
+export function createValidationEngine(config?: ValidationEngineConfig): ValidationEngine {
   return {
     validate(
       testCases: TransformedTestCase[],
@@ -40,7 +54,15 @@ export function createValidationEngine(): ValidationEngine {
       let totalTestSteps = 0;
 
       for (const testCase of testCases) {
-        const rowErrors = validateTestCase(testCase, metadata);
+        let rowErrors: ValidationError[];
+
+        if (config?.externalRules) {
+          // Use strategy-provided rules + universal custom property validation
+          rowErrors = validateWithExternalRules(testCase, metadata, config.externalRules);
+        } else {
+          // Use built-in test-case-specific rules
+          rowErrors = validateTestCase(testCase, metadata);
+        }
 
         for (const err of rowErrors) {
           if (err.severity === 'error') {
@@ -76,6 +98,113 @@ export function createValidationEngine(): ValidationEngine {
       };
     },
   };
+}
+
+/**
+ * Validates a test case using strategy-provided external rules plus
+ * universal custom property validation.
+ */
+function validateWithExternalRules(
+  testCase: TransformedTestCase,
+  metadata: TemplateMetadata,
+  rules: ValidationRule[],
+): ValidationError[] {
+  const issues: ValidationError[] = [];
+
+  // Convert TransformedTestCase to TransformedArtifact for the strategy rules
+  const artifact: TransformedArtifact = {
+    sourceRowIndex: testCase.sourceRowIndex,
+    name: testCase.name,
+    fields: {
+      Name: testCase.name,
+      Description: testCase.description ?? null,
+      TestCasePriorityId: testCase.testCasePriorityId ?? null,
+      TestCaseStatusId: testCase.testCaseStatusId ?? null,
+      TestCaseTypeId: testCase.testCaseTypeId ?? null,
+      OwnerId: testCase.ownerId ?? null,
+      Tags: testCase.tags ?? null,
+    },
+    customProperties: testCase.customProperties.map(cp => ({
+      propertyNumber: cp.propertyNumber,
+      value: cp.value,
+    })),
+    subItems: testCase.testSteps.map(s => ({
+      description: s.description,
+      expectedResult: s.expectedResult,
+      sampleData: s.sampleData,
+      position: s.position,
+    })),
+    folderPath: testCase.folderPath,
+    tags: testCase.tags,
+  };
+
+  // Convert TemplateMetadata to ArtifactMetadata for the strategy rules
+  const artifactMetadata: ArtifactMetadata = {
+    projectId: metadata.projectId,
+    templateId: metadata.templateId,
+    customProperties: metadata.customProperties,
+    customLists: metadata.customLists,
+    users: metadata.users,
+    components: metadata.components,
+    lookups: [
+      {
+        fieldName: 'TestCasePriorityId',
+        label: 'Priorities',
+        entries: metadata.priorities.map(p => ({ id: p.priorityId, name: p.name, active: p.active })),
+      },
+      {
+        fieldName: 'TestCaseStatusId',
+        label: 'Statuses',
+        entries: metadata.statuses.map(s => ({ id: s.testCaseStatusId, name: s.name, active: s.active })),
+      },
+      {
+        fieldName: 'TestCaseTypeId',
+        label: 'Types',
+        entries: metadata.types.map(t => ({ id: t.testCaseTypeId, name: t.name, active: t.active })),
+      },
+    ],
+    existingFolders: metadata.existingFolders.map(f => ({
+      id: f.testCaseFolderId,
+      name: f.name,
+      parentId: f.parentTestCaseFolderId,
+      indentLevel: f.indentLevel,
+    })),
+  };
+
+  // Run each external rule
+  for (const rule of rules) {
+    const ruleIssues = rule(artifact, artifactMetadata);
+    issues.push(...ruleIssues);
+  }
+
+  // Always run custom property validation (universal across all artifact types)
+  for (const cpValue of testCase.customProperties) {
+    const propDef = metadata.customProperties.find(
+      (cp) => cp.propertyNumber === cpValue.propertyNumber
+    );
+
+    if (!propDef) {
+      issues.push({
+        rowIndex: testCase.sourceRowIndex,
+        field: `CustomProperty_${cpValue.propertyNumber}`,
+        message: `Custom property number ${cpValue.propertyNumber} is not defined in the template`,
+        severity: 'warning',
+      });
+      continue;
+    }
+
+    if (cpValue.value == null) continue;
+
+    const typeIssues = validateCustomPropertyType(
+      testCase.sourceRowIndex,
+      propDef,
+      cpValue.value,
+      metadata,
+    );
+    issues.push(...typeIssues);
+  }
+
+  return issues;
 }
 
 /**
