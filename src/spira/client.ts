@@ -318,7 +318,7 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
   async function getComponents(): Promise<Component[]> {
     return request<Component[]>(
       'GET',
-      `/projects/${config.projectId}/components`,
+      `/projects/${config.projectId}/components?active_only=true&include_deleted=false`,
     );
   }
 

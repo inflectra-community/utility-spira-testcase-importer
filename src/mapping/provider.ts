@@ -7,6 +7,7 @@ import type { LanguageModel } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
+import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import type { LLMConfig } from '../types/config.js';
 
 /**
@@ -39,7 +40,10 @@ export function createLLMProvider(config: LLMConfig): LanguageModel {
       if (!config.region) {
         throw new Error('AWS Bedrock provider requires a region. Provide it via --region or AWS_REGION environment variable.');
       }
-      const bedrock = createAmazonBedrock({ region: config.region });
+      const bedrock = createAmazonBedrock({
+        region: config.region,
+        credentialProvider: fromNodeProviderChain({ ignoreCache: false }),
+      });
       return bedrock(config.model);
     }
 

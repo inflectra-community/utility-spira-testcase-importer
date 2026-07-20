@@ -38,6 +38,8 @@ import { createImportEngine } from './importer/index.js';
 export interface PipelineOptions {
   /** When provided, drives all artifact-specific behavior in the pipeline. */
   strategy?: ArtifactStrategy;
+  /** When provided, skips interactive worksheet selection and uses this sheet name. */
+  sheetName?: string;
 }
 
 /**
@@ -78,7 +80,16 @@ export async function runPipeline(
 
   // Select worksheet if multiple exist
   let selectedSheet: SheetData;
-  if (spreadsheet.sheets.length === 1) {
+  if (options?.sheetName) {
+    // Sheet name provided via CLI — skip interactive selection
+    const match = spreadsheet.sheets.find((s) => s.name === options.sheetName);
+    if (!match) {
+      const available = spreadsheet.sheets.map((s) => s.name).join(', ');
+      throw new Error(`Worksheet "${options.sheetName}" not found. Available: ${available}`);
+    }
+    selectedSheet = match;
+    logger.info(`Using specified worksheet: "${selectedSheet.name}" (${selectedSheet.rowCount} rows)`);
+  } else if (spreadsheet.sheets.length === 1) {
     selectedSheet = spreadsheet.sheets[0];
     logger.info(`Using worksheet: "${selectedSheet.name}" (${selectedSheet.rowCount} rows)`);
   } else {

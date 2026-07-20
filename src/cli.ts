@@ -29,6 +29,7 @@ program
   .option('--region <region>', 'AWS region for Bedrock provider (env: AWS_REGION)')
   .option('--dry-run', 'Validate and transform without importing to Spira', false)
   .option('--log-file <path>', 'Custom log file output path')
+  .option('--sheet <name>', 'Worksheet name to use (skips interactive selection)')
   .option('--artifact-type <type>', `Artifact type to import: ${getSupportedArtifactTypes().join(', ')}`, 'test-case')
   .action(async (options) => {
     const logger = createLogger();
@@ -51,7 +52,7 @@ program
       const config = loadConfig(cliArgs);
 
       const strategy = createStrategy(options.artifactType);
-      await runPipeline(config, logger, { strategy });
+      await runPipeline(config, logger, { strategy, sheetName: options.sheet });
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         process.stderr.write(`\n❌ Configuration Error:\n${error.message}\n\n`);
