@@ -21,7 +21,7 @@ import type { ImporterConfig } from './types/config.js';
 import type { Logger } from './logger/index.js';
 import type { TemplateMetadata } from './types/spira.js';
 import type { SheetData } from './parser/index.js';
-import type { MappingResult } from './types/mapping.js';
+import type { MappingResult, FieldMapping } from './types/mapping.js';
 import type { ArtifactStrategy } from './types/strategy.js';
 import { createSpiraClient } from './spira/client.js';
 import { fetchAllMetadata } from './spira/metadata.js';
@@ -31,6 +31,7 @@ import { createDataTransformer } from './transformer/index.js';
 import { createValidationEngine } from './validator/index.js';
 import { generateValidationReport } from './report/index.js';
 import { createImportEngine } from './importer/index.js';
+import { analyzeSpreadsheet, type PreAnalysisResult } from './heuristics/index.js';
 
 /**
  * Pipeline options including the optional strategy.
@@ -113,12 +114,50 @@ export async function runPipeline(
     return;
   }
 
-  // Phase 4: LLM-Assisted Mapping
-  logger.info('Phase 4: Generating field mapping via LLM...');
-  const mappingEngine = createMappingEngine(config.llm);
+  // Phase 3.5: Heuristic Pre-Analysis
+  logger.info('Phase 3.5: Running heuristic pre-analysis...');
+  const preAnalysis = analyzeSpreadsheet(selectedSheet, {
+    fieldDefinitions: strategy?.getFieldDefinitions() ?? [
+      { name: 'Name', label: 'Name', type: 'string', required: true, description: 'Test case name' },
+      { name: 'Description', label: 'Description', type: 'string', required: false, description: 'Description' },
+      { name: 'TestCasePriorityId', label: 'Priority', type: 'integer', required: false, description: 'Priority ID' },
+      { name: 'TestCaseStatusId', label: 'Status', type: 'integer', required: false, description: 'Status ID' },
+      { name: 'TestCaseTypeId', label: 'Type', type: 'integer', required: false, description: 'Type ID' },
+      { name: 'OwnerId', label: 'Owner', type: 'integer', required: false, description: 'Owner user ID' },
+      { name: 'ComponentIds', label: 'Components', type: 'integer[]', required: false, description: 'Component IDs' },
+      { name: 'Tags', label: 'Tags', type: 'string', required: false, description: 'Tags' },
+    ],
+    metadata: {
+      projectId: metadata.projectId,
+      templateId: metadata.templateId,
+      customProperties: metadata.customProperties,
+      customLists: metadata.customLists,
+      users: metadata.users,
+      components: metadata.components,
+      lookups: [
+        { fieldName: 'TestCasePriorityId', label: 'Priorities', entries: metadata.priorities.map(p => ({ id: p.priorityId, name: p.name, active: p.active })) },
+        { fieldName: 'TestCaseStatusId', label: 'Statuses', entries: metadata.statuses.map(s => ({ id: s.testCaseStatusId, name: s.name, active: s.active })) },
+        { fieldName: 'TestCaseTypeId', label: 'Types', entries: metadata.types.map(t => ({ id: t.testCaseTypeId, name: t.name, active: t.active })) },
+      ],
+      existingFolders: metadata.existingFolders.map(f => ({ id: f.testCaseFolderId, name: f.name, parentId: f.parentTestCaseFolderId, indentLevel: f.indentLevel })),
+    },
+  });
+  process.stdout.write('\n' + preAnalysis.summary + '\n\n');
 
-  let mappingResult: MappingResult = await mappingEngine.generateMapping(selectedSheet, metadata);
-  logger.info(`LLM mapping generated with confidence: ${mappingResult.confidence}`);
+  // Phase 4: LLM-Assisted Mapping (or skip if heuristics fully resolved)
+  let mappingResult: MappingResult;
+
+  if (preAnalysis.fullyResolved) {
+    logger.info('Heuristics fully resolved the mapping - skipping LLM call.');
+    mappingResult = convertPreAnalysisToMapping(preAnalysis);
+  } else {
+    logger.info(`Phase 4: Generating field mapping via LLM (${preAnalysis.unresolvedColumns.length} columns need LLM)...`);
+    const mappingEngine = createMappingEngine(config.llm);
+    mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata);
+    // Merge heuristic value lookups into the LLM result
+    mergeLookupMaps(mappingResult, preAnalysis);
+    logger.info(`LLM mapping generated with confidence: ${mappingResult.confidence}`);
+  }
 
   // Phase 5: User Mapping Review
   let mappingApproved = false;
@@ -141,6 +180,7 @@ export async function runPipeline(
         message: 'Enter your feedback for the LLM (describe what to change):',
       });
       logger.info('Regenerating mapping with user feedback...');
+      const mappingEngine = createMappingEngine(config.llm);
       mappingResult = await mappingEngine.retryMapping(mappingResult, feedback);
       logger.info(`Revised mapping generated with confidence: ${mappingResult.confidence}`);
     } else {
@@ -186,7 +226,8 @@ export async function runPipeline(
       const feedback = await input({
         message: 'Enter feedback for the LLM to revise the mapping:',
       });
-      mappingResult = await mappingEngine.retryMapping(mappingResult, feedback);
+      const revisionEngine = createMappingEngine(config.llm);
+      mappingResult = await revisionEngine.retryMapping(mappingResult, feedback);
 
       transformResult = transformer.transform(selectedSheet.rows, mappingResult, metadata);
       validationResult = validator.validate(transformResult.testCases, metadata);
@@ -292,4 +333,73 @@ function displayImportSummary(
   }
 
   process.stdout.write('═══════════════════════════════════════════════════════════════\n');
+}
+
+/**
+ * Converts a fully-resolved PreAnalysisResult into a MappingResult
+ * that the downstream transformer can consume.
+ */
+function convertPreAnalysisToMapping(preAnalysis: PreAnalysisResult): MappingResult {
+  const fieldMappings: FieldMapping[] = [];
+
+  for (const match of preAnalysis.resolvedMappings) {
+    const lookupMap = preAnalysis.valueLookups.get(match.targetField);
+    const transformType = lookupMap ? 'lookup' : 'direct';
+
+    fieldMappings.push({
+      sourceColumn: match.sourceColumn,
+      targetField: match.targetField === '__FolderPath__' ? 'FolderPath' : match.targetField,
+      transformType,
+      lookupMap,
+    });
+  }
+
+  // Add folder mapping if detected
+  const folderMapping = preAnalysis.structure.folderStructure.detected
+    ? { sourceColumn: preAnalysis.structure.folderStructure.column!, pathSeparator: preAnalysis.structure.folderStructure.separator ?? '/' }
+    : undefined;
+
+  // Add test step mapping if detected
+  let testStepMapping = undefined;
+  const step = preAnalysis.structure.stepStructure;
+  if (step.mode === 'separate-rows') {
+    testStepMapping = {
+      mode: 'separate-rows' as const,
+      descriptionColumn: step.stepDescriptionColumn,
+      expectedResultColumn: step.stepExpectedResultColumn,
+    };
+  } else if (step.mode === 'inline') {
+    testStepMapping = {
+      mode: 'inline' as const,
+      descriptionColumn: step.inlineColumn,
+      stepDelimiter: step.inlineDelimiter === 'semicolon' ? ';' : '\n',
+    };
+  }
+
+  return {
+    fieldMappings,
+    testStepMapping,
+    folderMapping,
+    confidence: Math.min(...preAnalysis.resolvedMappings.map(m => m.confidence), 1.0),
+    unmappedSourceColumns: preAnalysis.unresolvedColumns,
+    unmappedTargetFields: [],
+    notes: ['Mapping resolved entirely by heuristic pre-analysis (no LLM call).'],
+  };
+}
+
+/**
+ * Merges heuristic value lookup maps into an LLM-produced MappingResult.
+ * For any lookup-type field mapping where the LLM provided a lookupMap,
+ * overlay the heuristic resolutions (which are more reliable for known values).
+ */
+function mergeLookupMaps(mappingResult: MappingResult, preAnalysis: PreAnalysisResult): void {
+  for (const fm of mappingResult.fieldMappings) {
+    if (fm.transformType === 'lookup') {
+      const heuristicMap = preAnalysis.valueLookups.get(fm.targetField);
+      if (heuristicMap) {
+        // Heuristic values override LLM values (more reliable)
+        fm.lookupMap = { ...(fm.lookupMap ?? {}), ...heuristicMap };
+      }
+    }
+  }
 }
