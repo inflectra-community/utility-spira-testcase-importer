@@ -120,22 +120,54 @@ function detectSeparateRows(
     return { mode: 'none', confidence: 0 };
   }
 
-  // Step 2: Find grouping column — a column where values repeat (uniqueRatio < 0.5)
+  // Step 2: Find grouping column — a column whose values form groups aligned with step number resets.
+  // A good grouping column has: multiple unique values (not a constant), low-ish ratio (repeats),
+  // and its value changes correlate with step number resets.
   let groupingColumn: string | undefined;
-  let bestRatio = 1.0;
+  let bestScore = 0;
 
   for (const header of headers) {
+    if (!header || typeof header !== 'string') continue;
     if (header === stepNumberColumn) continue;
 
     const values = rows.map(r => r[header]).filter(v => v != null && String(v).trim() !== '');
     if (values.length === 0) continue;
 
-    const unique = new Set(values.map(v => String(v).trim()));
-    const ratio = unique.size / values.length;
+    const strValues = values.map(v => String(v).trim());
+    const unique = new Set(strValues);
+    const uniqueCount = unique.size;
+    const ratio = uniqueCount / values.length;
 
-    // Grouping columns have low unique ratio but aren't constant (ratio > 0)
-    if (ratio < 0.5 && ratio > 0.01 && ratio < bestRatio) {
-      bestRatio = ratio;
+    // Skip constants (1-2 unique values) and high-cardinality columns (> 0.8 ratio)
+    if (uniqueCount <= 2 || ratio > 0.8) continue;
+
+    // Score: prefer columns where unique count is close to the number of step-number resets + 1
+    // (i.e., same number of "groups" as test cases)
+    // Also prefer columns with names suggesting identity (Id, Name, TC_ID, etc.)
+    const headerLower = header.toLowerCase();
+    const nameBonus = ['id', 'tc_id', 'test id', 'identifier', 'test case id'].some(
+      alias => headerLower === alias || headerLower.includes(alias),
+    ) ? 0.3 : 0;
+
+    // Correlate with step number: count how often the value changes when step resets to 1
+    const allValues = rows.map(r => String(r[header] ?? '').trim());
+    const stepNums = rows.map(r => Number(r[stepNumberColumn]));
+    let correlatedResets = 0;
+    let totalResets = 0;
+    for (let i = 1; i < stepNums.length; i++) {
+      if (stepNums[i] === 1 || stepNums[i] < stepNums[i - 1]) {
+        totalResets++;
+        if (allValues[i] !== allValues[i - 1]) {
+          correlatedResets++;
+        }
+      }
+    }
+    const correlationScore = totalResets > 0 ? correlatedResets / totalResets : 0;
+
+    const score = correlationScore + nameBonus + (1 - ratio) * 0.2;
+
+    if (score > bestScore) {
+      bestScore = score;
       groupingColumn = header;
     }
   }

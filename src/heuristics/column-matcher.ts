@@ -29,6 +29,12 @@ const FOLDER_ALIASES: string[] = [
   'folder', 'folder path', 'path', 'group', 'section', 'hierarchy', 'test folder',
 ];
 
+/** Columns that should be auto-ignored (not mappable via the API). */
+const IGNORE_PATTERNS: string[] = [
+  'attachment', 'attachments', 'file', 'files', 'image', 'screenshot',
+  'test step attachment', 'step attachment',
+];
+
 const STRIP_PATTERNS: RegExp[] = [
   /^test\s*case\s*/i,
   /^tc\s*/i,
@@ -112,6 +118,11 @@ function findMatches(
 ): ColumnMatch[] {
   const candidates: ColumnMatch[] = [];
   const headerLower = header.toLowerCase().trim();
+
+  // Strategy 0: Auto-ignore known unmappable columns
+  if (IGNORE_PATTERNS.some(p => headerLower === p || headerLower.includes(p))) {
+    return [{ sourceColumn: header, targetField: '__Ignore__', confidence: 1.0, tier: 1, matchReason: 'auto-ignore' }];
+  }
 
   // Strategy 1: Exact match against field names
   for (const field of fieldNames) {

@@ -9,6 +9,7 @@
 
 import type { SheetData } from '../parser/index.js';
 import type { PreAnalysisConfig, PreAnalysisResult, StructureDetectionResult } from './types.js';
+import type { LookupEntry } from './types.js';
 import { matchColumns } from './column-matcher.js';
 import { resolveValues } from './value-resolver.js';
 import { detectStructure } from './structure-detector.js';
@@ -61,6 +62,24 @@ export function analyzeSpreadsheet(
   for (const match of columnResult.matches) {
     if (lookupFieldNames.has(match.targetField) && match.confidence >= 0.7) {
       resolvedLookupColumns.set(match.sourceColumn, match.targetField);
+    }
+  }
+
+  // Also resolve custom properties with lists
+  const customPropertyListEntries = new Map<string, LookupEntry[]>();
+  for (const match of columnResult.matches) {
+    if (match.confidence < 0.7) continue;
+    // Find the custom property this maps to
+    const cp = metadata.customProperties.find(p => p.name === match.targetField);
+    if (cp && cp.customListId != null) {
+      const listValues = metadata.customLists.get(cp.customListId);
+      if (listValues && listValues.length > 0) {
+        resolvedLookupColumns.set(match.sourceColumn, match.targetField);
+        customPropertyListEntries.set(match.targetField, listValues.map(v => ({
+          id: v.customPropertyValueId,
+          name: v.name,
+        })));
+      }
     }
   }
 

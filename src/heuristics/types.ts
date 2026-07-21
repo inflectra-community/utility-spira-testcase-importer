@@ -60,6 +60,8 @@ export interface ValueResolverConfig {
   users: { id: number; fullName: string; userName: string }[];
   components: LookupEntry[];
   customLists: Map<number, LookupEntry[]>;
+  /** Custom property list entries keyed by custom property name */
+  customPropertyListEntries?: Map<string, LookupEntry[]>;
 }
 
 // --- Structure Detection ---

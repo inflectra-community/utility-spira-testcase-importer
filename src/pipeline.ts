@@ -228,7 +228,7 @@ export async function runPipeline(
     // Merge heuristic value lookups into the LLM result
     mergeLookupMaps(mappingResult, preAnalysis);
     // Ensure heuristic structure detection is preserved (LLM may not return step/folder config)
-    if (!mappingResult.testStepMapping && preAnalysis.structure.stepStructure.mode !== 'none') {
+    if (preAnalysis.structure.stepStructure.mode !== 'none') {
       const step = preAnalysis.structure.stepStructure;
       mappingResult.testStepMapping = {
         mode: step.mode,
@@ -238,7 +238,7 @@ export async function runPipeline(
         stepDelimiter: step.mode === 'inline' ? (step.inlineDelimiter === 'semicolon' ? ';' : '\n') : undefined,
       };
     }
-    if (!mappingResult.folderMapping && preAnalysis.structure.folderStructure.detected) {
+    if (preAnalysis.structure.folderStructure.detected) {
       mappingResult.folderMapping = {
         sourceColumn: preAnalysis.structure.folderStructure.column!,
         pathSeparator: preAnalysis.structure.folderStructure.separator ?? '/',
