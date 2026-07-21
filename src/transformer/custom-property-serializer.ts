@@ -74,14 +74,14 @@ export function serializeCustomProperty(
       result.DateTimeValue = String(propertyValue.value);
       break;
 
-    // List (6) → IntegerListValue as single-element array
+    // List (6) → IntegerValue (single-select list uses IntegerValue, not IntegerListValue)
     case 6: {
       const numVal = Number(propertyValue.value);
       if (isNaN(numVal)) {
         // Value couldn't be resolved to an ID — skip this property
         return result; // Returns just PropertyNumber with no value field
       }
-      result.IntegerListValue = [numVal];
+      result.IntegerValue = numVal;
       break;
     }
 
