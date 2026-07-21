@@ -340,42 +340,7 @@ export async function runPipeline(
       };
     }
     // Process LLM value suggestions — resolve suggested target names to IDs
-    if (mappingResult.valueSuggestions && mappingResult.valueSuggestions.length > 0) {
-      for (const suggestion of mappingResult.valueSuggestions) {
-        if (suggestion.suggestedTarget.toUpperCase() === 'SKIP') continue;
-
-        // Find the lookup entry matching the suggested target name
-        let resolvedId: number | undefined;
-        if (suggestion.field === 'TestCasePriorityId') {
-          const match = metadata.priorities.find(p => p.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-          resolvedId = match?.priorityId;
-        } else if (suggestion.field === 'TestCaseStatusId') {
-          const match = metadata.statuses.find(s => s.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-          resolvedId = match?.testCaseStatusId;
-        } else if (suggestion.field === 'TestCaseTypeId') {
-          const match = metadata.types.find(t => t.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-          resolvedId = match?.testCaseTypeId;
-        } else {
-          // Custom property list
-          const cp = metadata.customProperties.find(p => p.name === suggestion.field);
-          if (cp?.customListId) {
-            const listValues = metadata.customLists.get(cp.customListId);
-            const match = listValues?.find(v => v.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-            resolvedId = match?.customPropertyValueId;
-          }
-        }
-
-        if (resolvedId !== undefined) {
-          // Add to the field mapping's lookupMap
-          const fm = mappingResult.fieldMappings.find(f => f.targetField === suggestion.field);
-          if (fm) {
-            if (!fm.lookupMap) fm.lookupMap = {};
-            fm.lookupMap[suggestion.sourceValue] = resolvedId;
-            if (fm.transformType === 'direct') fm.transformType = 'lookup';
-          }
-        }
-      }
-    }
+    processValueSuggestions(mappingResult, metadata);
     logger.info(`LLM mapping generated with confidence: ${mappingResult.confidence}`);
   }
 
@@ -384,17 +349,57 @@ export async function runPipeline(
   while (!mappingApproved) {
     displayMappingSummary(mappingResult);
 
+    const hasValueSuggestions = mappingResult.valueSuggestions && mappingResult.valueSuggestions.length > 0;
+    const choices: { name: string; value: string }[] = [
+      { name: 'Accept mapping and continue', value: 'accept' },
+    ];
+    if (hasValueSuggestions) {
+      choices.push({ name: 'Edit value mappings', value: 'editValues' });
+    }
+    choices.push({ name: 'Provide feedback and regenerate', value: 'feedback' });
+    choices.push({ name: 'Abort import', value: 'abort' });
+
     const reviewChoice = await select({
       message: 'Review the proposed mapping:',
-      choices: [
-        { name: 'Accept mapping and continue', value: 'accept' },
-        { name: 'Provide feedback and regenerate', value: 'feedback' },
-        { name: 'Abort import', value: 'abort' },
-      ],
+      choices,
     });
 
     if (reviewChoice === 'accept') {
       mappingApproved = true;
+    } else if (reviewChoice === 'editValues') {
+      // Let the user override each value suggestion
+      for (let i = 0; i < mappingResult.valueSuggestions!.length; i++) {
+        const vs = mappingResult.valueSuggestions![i];
+        // Get available targets for this field
+        let targets: string[] = [];
+        if (vs.field === 'TestCasePriorityId') targets = metadata.priorities.map(p => p.name);
+        else if (vs.field === 'TestCaseStatusId') targets = metadata.statuses.map(s => s.name);
+        else if (vs.field === 'TestCaseTypeId') targets = metadata.types.map(t => t.name);
+        else {
+          const cp = metadata.customProperties.find(p => p.name === vs.field);
+          if (cp?.customListId) {
+            const listValues = metadata.customLists.get(cp.customListId);
+            if (listValues) targets = listValues.map(v => v.name);
+          }
+        }
+
+        const targetChoices = [
+          ...targets.map(t => ({ name: t, value: t })),
+          { name: '(skip - leave blank)', value: 'SKIP' },
+        ];
+
+        const picked = await select({
+          message: `${vs.field}: "${vs.sourceValue}" → currently "${vs.suggestedTarget}". Map to:`,
+          choices: targetChoices,
+          default: vs.suggestedTarget,
+        });
+
+        mappingResult.valueSuggestions![i] = { ...vs, suggestedTarget: picked };
+      }
+
+      // Re-process the edited suggestions into lookup maps
+      processValueSuggestions(mappingResult, metadata);
+      // Re-display
     } else if (reviewChoice === 'feedback') {
       const feedback = await input({
         message: 'Enter your feedback for the LLM (describe what to change):',
@@ -686,6 +691,46 @@ function mergeLookupMaps(mappingResult: MappingResult, preAnalysis: PreAnalysisR
       if (heuristicMap) {
         // Heuristic values override LLM values (more reliable)
         fm.lookupMap = { ...(fm.lookupMap ?? {}), ...heuristicMap };
+      }
+    }
+  }
+}
+
+/**
+ * Processes value suggestions: resolves suggested target names to Spira IDs
+ * and merges them into the field mapping lookupMaps.
+ */
+function processValueSuggestions(mappingResult: MappingResult, metadata: TemplateMetadata): void {
+  if (!mappingResult.valueSuggestions) return;
+
+  for (const suggestion of mappingResult.valueSuggestions) {
+    if (suggestion.suggestedTarget.toUpperCase() === 'SKIP') continue;
+
+    let resolvedId: number | undefined;
+    if (suggestion.field === 'TestCasePriorityId') {
+      const match = metadata.priorities.find(p => p.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+      resolvedId = match?.priorityId;
+    } else if (suggestion.field === 'TestCaseStatusId') {
+      const match = metadata.statuses.find(s => s.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+      resolvedId = match?.testCaseStatusId;
+    } else if (suggestion.field === 'TestCaseTypeId') {
+      const match = metadata.types.find(t => t.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+      resolvedId = match?.testCaseTypeId;
+    } else {
+      const cp = metadata.customProperties.find(p => p.name === suggestion.field);
+      if (cp?.customListId) {
+        const listValues = metadata.customLists.get(cp.customListId);
+        const match = listValues?.find(v => v.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+        resolvedId = match?.customPropertyValueId;
+      }
+    }
+
+    if (resolvedId !== undefined) {
+      const fm = mappingResult.fieldMappings.find(f => f.targetField === suggestion.field);
+      if (fm) {
+        if (!fm.lookupMap) fm.lookupMap = {};
+        fm.lookupMap[suggestion.sourceValue] = resolvedId;
+        if (fm.transformType === 'direct') fm.transformType = 'lookup';
       }
     }
   }
