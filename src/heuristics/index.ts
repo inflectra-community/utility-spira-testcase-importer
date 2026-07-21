@@ -52,7 +52,7 @@ export function analyzeSpreadsheet(
   const headersToMatch = sheet.headers.filter(h => !structureClaimedColumns.has(h));
   const columnResult = matchColumns(headersToMatch, {
     fieldDefinitions,
-    customPropertyNames: metadata.customProperties.map(cp => cp.name),
+    customPropertyNames: metadata.customProperties.map(cp => cp.name).filter(Boolean),
   });
 
   // Phase 3: Value resolution for lookup-type fields

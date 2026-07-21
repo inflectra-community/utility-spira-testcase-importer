@@ -82,6 +82,9 @@ export function matchColumns(
   const fieldNames = config.fieldDefinitions.map(f => f.name);
 
   for (const header of headers) {
+    if (!header || typeof header !== 'string' || header.trim() === '') {
+      continue; // Skip null/undefined/empty headers
+    }
     const candidates = findMatches(header, fieldNames, config.customPropertyNames);
 
     if (candidates.length === 0) {
@@ -147,12 +150,34 @@ function findMatches(
     }
   }
 
-  // Strategy 4: Custom property name match
+  // Strategy 4: Custom property name match (exact)
   for (const cpName of customPropertyNames) {
+    if (!cpName) continue;
     if (headerLower === cpName.toLowerCase()) {
       return [{ sourceColumn: header, targetField: cpName, confidence: 1.0, tier: 1, matchReason: 'custom-property' }];
     }
   }
+
+  // Strategy 4b: Custom property fuzzy/contains match
+  for (const cpName of customPropertyNames) {
+    if (!cpName) continue;
+    const cpLower = cpName.toLowerCase();
+
+    // Source is substring of custom property name (e.g., "Transaction" matches "Transaction Code")
+    if (cpLower.includes(headerLower) && headerLower.length >= 3) {
+      candidates.push({ sourceColumn: header, targetField: cpName, confidence: 0.9, tier: 2, matchReason: 'custom-property-contains' });
+    }
+    // Custom property name is substring of source
+    if (headerLower.includes(cpLower) && cpLower.length >= 3) {
+      candidates.push({ sourceColumn: header, targetField: cpName, confidence: 0.85, tier: 2, matchReason: 'custom-property-substring' });
+    }
+    // Levenshtein against custom property name
+    const sim = levenshteinSimilarity(headerLower, cpLower);
+    if (sim > 0.8) {
+      candidates.push({ sourceColumn: header, targetField: cpName, confidence: sim, tier: 2, matchReason: `custom-property-fuzzy(${sim.toFixed(2)})` });
+    }
+  }
+  if (candidates.length > 0) return candidates;
 
   // Strategy 5: Normalised Levenshtein (threshold > 0.8)
   for (const field of fieldNames) {

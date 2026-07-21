@@ -57,6 +57,25 @@ export async function runPipeline(
 ): Promise<void> {
   const strategy = options?.strategy;
 
+  // Display configuration banner
+  const DIM = '\x1b[2m';
+  const BOLD = '\x1b[1m';
+  const CYAN = '\x1b[36m';
+  const RESET = '\x1b[0m';
+  process.stdout.write(`\n${CYAN}${BOLD}─── Spira Import Configuration ───${RESET}\n`);
+  process.stdout.write(`  ${BOLD}Spira URL:${RESET}     ${config.spira.baseUrl}\n`);
+  process.stdout.write(`  ${BOLD}Project ID:${RESET}    ${config.spira.projectId}\n`);
+  process.stdout.write(`  ${BOLD}Username:${RESET}      ${config.spira.username}\n`);
+  process.stdout.write(`  ${BOLD}API Key:${RESET}       ${DIM}(hidden)${RESET}\n`);
+  process.stdout.write(`  ${BOLD}LLM Provider:${RESET}  ${config.llm.provider}\n`);
+  process.stdout.write(`  ${BOLD}LLM Model:${RESET}     ${config.llm.model}\n`);
+  if (config.llm.region) {
+    process.stdout.write(`  ${BOLD}AWS Region:${RESET}    ${config.llm.region}\n`);
+  }
+  process.stdout.write(`  ${BOLD}Source File:${RESET}   ${config.sourceFile}\n`);
+  process.stdout.write(`  ${BOLD}Dry Run:${RESET}       ${config.dryRun ? 'Yes' : 'No'}\n`);
+  process.stdout.write(`${CYAN}${'─'.repeat(35)}${RESET}\n\n`);
+
   // Phase 1: Connect & Authenticate
   logger.info('Phase 1: Connecting to Spira...');
   const spiraClient = createSpiraClient(config.spira, logger);
