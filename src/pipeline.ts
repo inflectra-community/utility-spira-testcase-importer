@@ -227,6 +227,44 @@ export async function runPipeline(
     contextLines.push('- IMPORTANT: This is an import from an external system into Spira. The source data has its own ID space (e.g., "TC-7", "REQ-123"). These are NOT Spira IDs. Columns named "Id", "ID", "Test ID", "TC_ID" etc. are historical source identifiers. If a text-type custom property exists for storing source references (e.g., "Source Test ID"), map the ID column there. Otherwise ignore it.');
     contextLines.push('- Columns containing file paths, screenshots, or attachment references cannot be imported via the API. Mark them as "ignore".');
 
+    // Add unresolved values for LLM to suggest mappings
+    if (preAnalysis.unresolvedValues.length > 0) {
+      contextLines.push('');
+      contextLines.push('## Unresolved value mappings (suggest the best match or "SKIP"):');
+      contextLines.push('For each source value below, suggest which target value it should map to.');
+      contextLines.push('Use the EXACT target name from the available list. If no reasonable match exists, say "SKIP".');
+      contextLines.push('');
+
+      // Group by field and show available targets
+      const byField = new Map<string, string[]>();
+      for (const uv of preAnalysis.unresolvedValues) {
+        if (!byField.has(uv.field)) byField.set(uv.field, []);
+        byField.get(uv.field)!.push(uv.sourceValue);
+      }
+
+      for (const [field, values] of byField) {
+        // Get available target values for this field
+        let availableTargets: string[] = [];
+        const lookup = metadata.priorities.map(p => p.name);
+        if (field === 'TestCasePriorityId') availableTargets = metadata.priorities.map(p => p.name);
+        else if (field === 'TestCaseStatusId') availableTargets = metadata.statuses.map(s => s.name);
+        else if (field === 'TestCaseTypeId') availableTargets = metadata.types.map(t => t.name);
+        else {
+          // Custom property list
+          const cp = metadata.customProperties.find(p => p.name === field);
+          if (cp?.customListId) {
+            const listValues = metadata.customLists.get(cp.customListId);
+            if (listValues) availableTargets = listValues.map(v => v.name);
+          }
+        }
+
+        contextLines.push(`Field: ${field}`);
+        contextLines.push(`  Source values needing resolution: ${values.map(v => `"${v}"`).join(', ')}`);
+        contextLines.push(`  Available targets: ${availableTargets.map(t => `"${t}"`).join(', ')}`);
+        contextLines.push('');
+      }
+    }
+
     const preAnalysisContextStr = contextLines.join('\n');
 
     // TODO: Token optimisation — when unresolved columns are few (<= 3), consider a slim prompt
@@ -257,7 +295,19 @@ export async function runPipeline(
           transformType: heuristic.targetField === '__Ignore__' ? 'ignore' : (lookupMap ? 'lookup' : 'direct'),
           lookupMap,
         };
+        heuristicResolved.delete(fm.sourceColumn); // Mark as handled
       }
+    }
+    // Add any heuristic-resolved columns not present in LLM response
+    for (const [sourceColumn, heuristic] of heuristicResolved) {
+      if (heuristic.targetField === '__Ignore__') continue; // Ignores don't need adding
+      const lookupMap = preAnalysis.valueLookups.get(heuristic.targetField);
+      mappingResult.fieldMappings.push({
+        sourceColumn,
+        targetField: heuristic.targetField,
+        transformType: lookupMap ? 'lookup' : 'direct',
+        lookupMap,
+      });
     }
     // Also remove step columns from fieldMappings — they're handled by testStepMapping
     const stepColumns = new Set<string>();
@@ -288,6 +338,43 @@ export async function runPipeline(
         sourceColumn: preAnalysis.structure.folderStructure.column!,
         pathSeparator: preAnalysis.structure.folderStructure.separator ?? '/',
       };
+    }
+    // Process LLM value suggestions — resolve suggested target names to IDs
+    if (mappingResult.valueSuggestions && mappingResult.valueSuggestions.length > 0) {
+      for (const suggestion of mappingResult.valueSuggestions) {
+        if (suggestion.suggestedTarget.toUpperCase() === 'SKIP') continue;
+
+        // Find the lookup entry matching the suggested target name
+        let resolvedId: number | undefined;
+        if (suggestion.field === 'TestCasePriorityId') {
+          const match = metadata.priorities.find(p => p.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+          resolvedId = match?.priorityId;
+        } else if (suggestion.field === 'TestCaseStatusId') {
+          const match = metadata.statuses.find(s => s.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+          resolvedId = match?.testCaseStatusId;
+        } else if (suggestion.field === 'TestCaseTypeId') {
+          const match = metadata.types.find(t => t.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+          resolvedId = match?.testCaseTypeId;
+        } else {
+          // Custom property list
+          const cp = metadata.customProperties.find(p => p.name === suggestion.field);
+          if (cp?.customListId) {
+            const listValues = metadata.customLists.get(cp.customListId);
+            const match = listValues?.find(v => v.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+            resolvedId = match?.customPropertyValueId;
+          }
+        }
+
+        if (resolvedId !== undefined) {
+          // Add to the field mapping's lookupMap
+          const fm = mappingResult.fieldMappings.find(f => f.targetField === suggestion.field);
+          if (fm) {
+            if (!fm.lookupMap) fm.lookupMap = {};
+            fm.lookupMap[suggestion.sourceValue] = resolvedId;
+            if (fm.transformType === 'direct') fm.transformType = 'lookup';
+          }
+        }
+      }
     }
     logger.info(`LLM mapping generated with confidence: ${mappingResult.confidence}`);
   }
@@ -454,6 +541,20 @@ function displayMappingSummary(mapping: MappingResult): void {
     process.stdout.write(`${CYAN}├─────────────────────────────────────────────────────────────┤${RESET}\n`);
     for (const note of mapping.notes.slice(0, 3)) {
       process.stdout.write(`│  ${DIM}${note.slice(0, 57)}${RESET}│\n`);
+    }
+  }
+
+  // Value suggestions from LLM
+  if (mapping.valueSuggestions && mapping.valueSuggestions.length > 0) {
+    process.stdout.write(`${CYAN}\u251c${'─'.repeat(61)}\u2524${RESET}\n`);
+    process.stdout.write(`\u2502  ${BOLD}Value Mappings${RESET}\n`);
+    for (const vs of mapping.valueSuggestions) {
+      const skipped = vs.suggestedTarget.toUpperCase() === 'SKIP';
+      const colour = skipped ? DIM : YELLOW;
+      const arrow = skipped ? ' x ' : ' -> ';
+      const target = skipped ? 'SKIP (no match)' : vs.suggestedTarget;
+      const reason = vs.reason ? ` ${DIM}(${vs.reason})${RESET}` : '';
+      process.stdout.write(`\u2502  ${colour}${vs.field}: "${vs.sourceValue}"${arrow}${target}${reason}${RESET}\n`);
     }
   }
 

@@ -473,6 +473,7 @@ Produce a structured mapping result with the following structure:
 - **unmappedSourceColumns**: Source columns that don't map to any Spira field
 - **unmappedTargetFields**: Spira fields that have no source column mapped to them
 - **notes**: Any observations about ambiguities or assumptions made
+- **valueSuggestions**: (optional) For source values that couldn't be auto-matched to Spira list entries, suggest the best target. Array of { field, sourceValue, suggestedTarget, reason }. Use "SKIP" as suggestedTarget if no reasonable match exists.
 
 ## Important Rules:
 1. Every source column must appear either in fieldMappings (with any transformType including "ignore") or in unmappedSourceColumns

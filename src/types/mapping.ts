@@ -29,6 +29,13 @@ export const FolderMappingConfigSchema = z.object({
   pathSeparator: z.string(),
 });
 
+export const ValueSuggestionSchema = z.object({
+  field: z.string(),
+  sourceValue: z.string(),
+  suggestedTarget: z.string(), // target value name or "SKIP"
+  reason: z.string().optional(),
+});
+
 export const MappingResultSchema = z.object({
   fieldMappings: z.array(FieldMappingSchema),
   testStepMapping: TestStepMappingConfigSchema.optional(),
@@ -37,6 +44,7 @@ export const MappingResultSchema = z.object({
   unmappedSourceColumns: z.array(z.string()),
   unmappedTargetFields: z.array(z.string()),
   notes: z.array(z.string()),
+  valueSuggestions: z.array(ValueSuggestionSchema).optional(),
 });
 
 // --- TypeScript Interfaces (inferred from schemas) ---
@@ -45,3 +53,4 @@ export type FieldMapping = z.infer<typeof FieldMappingSchema>;
 export type TestStepMappingConfig = z.infer<typeof TestStepMappingConfigSchema>;
 export type FolderMappingConfig = z.infer<typeof FolderMappingConfigSchema>;
 export type MappingResult = z.infer<typeof MappingResultSchema>;
+export type ValueSuggestion = z.infer<typeof ValueSuggestionSchema>;
