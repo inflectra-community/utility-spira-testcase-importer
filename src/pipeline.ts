@@ -231,8 +231,8 @@ export async function runPipeline(
     if (preAnalysis.unresolvedValues.length > 0) {
       contextLines.push('');
       contextLines.push('## Unresolved value mappings (suggest the best match or "SKIP"):');
-      contextLines.push('For each source value below, suggest which target value it should map to.');
-      contextLines.push('Use the EXACT target name from the available list. If no reasonable match exists, say "SKIP".');
+      contextLines.push('For each source value below, suggest which target value NAME it should map to.');
+      contextLines.push('Return the EXACT target NAME string from the available list (NOT the numeric ID). If no reasonable match exists, say "SKIP".');
       contextLines.push('');
 
       // Group by field and show available targets
@@ -557,9 +557,14 @@ function displayMappingSummary(mapping: MappingResult): void {
       const skipped = vs.suggestedTarget.toUpperCase() === 'SKIP';
       const colour = skipped ? DIM : YELLOW;
       const arrow = skipped ? ' x ' : ' -> ';
-      const target = skipped ? 'SKIP (no match)' : vs.suggestedTarget;
-      const reason = vs.reason ? ` ${DIM}(${vs.reason})${RESET}` : '';
-      process.stdout.write(`\u2502  ${colour}${vs.field}: "${vs.sourceValue}"${arrow}${target}${reason}${RESET}\n`);
+      // Display the target name (not ID). If LLM returned a number, use the reason field which often has the name.
+      let displayTarget = vs.suggestedTarget;
+      if (!skipped && /^\d+$/.test(vs.suggestedTarget) && vs.reason) {
+        // LLM returned an ID — extract name from reason if possible
+        displayTarget = vs.reason;
+      }
+      const target = skipped ? 'SKIP (no match)' : displayTarget;
+      process.stdout.write(`\u2502  ${colour}${vs.field}: "${vs.sourceValue}"${arrow}${target}${RESET}\n`);
     }
   }
 
@@ -707,21 +712,32 @@ function processValueSuggestions(mappingResult: MappingResult, metadata: Templat
     if (suggestion.suggestedTarget.toUpperCase() === 'SKIP') continue;
 
     let resolvedId: number | undefined;
-    if (suggestion.field === 'TestCasePriorityId') {
-      const match = metadata.priorities.find(p => p.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-      resolvedId = match?.priorityId;
-    } else if (suggestion.field === 'TestCaseStatusId') {
-      const match = metadata.statuses.find(s => s.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-      resolvedId = match?.testCaseStatusId;
-    } else if (suggestion.field === 'TestCaseTypeId') {
-      const match = metadata.types.find(t => t.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-      resolvedId = match?.testCaseTypeId;
-    } else {
-      const cp = metadata.customProperties.find(p => p.name === suggestion.field);
-      if (cp?.customListId) {
-        const listValues = metadata.customLists.get(cp.customListId);
-        const match = listValues?.find(v => v.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-        resolvedId = match?.customPropertyValueId;
+
+    // Check if LLM returned a numeric ID directly
+    const numericId = Number(suggestion.suggestedTarget);
+    if (!isNaN(numericId) && Number.isInteger(numericId)) {
+      // Validate the ID exists in the lookup
+      resolvedId = numericId;
+    }
+
+    // Try matching by name
+    if (resolvedId === undefined) {
+      if (suggestion.field === 'TestCasePriorityId') {
+        const match = metadata.priorities.find(p => p.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+        resolvedId = match?.priorityId;
+      } else if (suggestion.field === 'TestCaseStatusId') {
+        const match = metadata.statuses.find(s => s.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+        resolvedId = match?.testCaseStatusId;
+      } else if (suggestion.field === 'TestCaseTypeId') {
+        const match = metadata.types.find(t => t.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+        resolvedId = match?.testCaseTypeId;
+      } else {
+        const cp = metadata.customProperties.find(p => p.name === suggestion.field);
+        if (cp?.customListId) {
+          const listValues = metadata.customLists.get(cp.customListId);
+          const match = listValues?.find(v => v.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
+          resolvedId = match?.customPropertyValueId;
+        }
       }
     }
 
