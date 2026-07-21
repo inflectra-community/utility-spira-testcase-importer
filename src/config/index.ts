@@ -28,6 +28,7 @@ export interface CliArgs {
   sourceFile?: string;
   dryRun?: boolean;
   logFile?: string;
+  rootFolder?: string;
 }
 
 /**
@@ -48,12 +49,12 @@ export function loadConfig(cliArgs: CliArgs): ImporterConfig {
     baseUrl: cliArgs.spiraUrl ?? process.env.SPIRA_URL,
     username: cliArgs.username ?? process.env.SPIRA_USERNAME,
     apiKey: cliArgs.apiKey ?? process.env.SPIRA_API_KEY,
-    projectId: cliArgs.projectId,
+    projectId: cliArgs.projectId ?? (process.env.SPIRA_PROJECT_ID ? parseInt(process.env.SPIRA_PROJECT_ID, 10) : undefined),
   };
 
   const llm: Record<string, unknown> = {
-    provider: cliArgs.provider,
-    model: cliArgs.model,
+    provider: cliArgs.provider ?? process.env.LLM_PROVIDER,
+    model: cliArgs.model ?? process.env.LLM_MODEL,
     apiKey: cliArgs.llmApiKey ?? process.env.LLM_API_KEY,
     region: cliArgs.region ?? process.env.AWS_REGION,
   };
@@ -61,9 +62,10 @@ export function loadConfig(cliArgs: CliArgs): ImporterConfig {
   const rawConfig = {
     spira,
     llm,
-    sourceFile: cliArgs.sourceFile,
+    sourceFile: cliArgs.sourceFile ?? process.env.SOURCE_FILE,
     dryRun: cliArgs.dryRun ?? false,
     logFile: cliArgs.logFile,
+    rootFolder: cliArgs.rootFolder ?? (process.env.ROOT_FOLDER || undefined),
   };
 
   // Validate with Zod schemas

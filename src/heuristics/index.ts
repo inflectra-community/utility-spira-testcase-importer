@@ -109,6 +109,7 @@ export function analyzeSpreadsheet(
           values.map(v => ({ id: v.customPropertyValueId, name: v.name })),
         ]),
       ),
+      customPropertyListEntries: customPropertyListEntries,
     },
   );
 

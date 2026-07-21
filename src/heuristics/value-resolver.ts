@@ -76,7 +76,12 @@ function getLookupEntries(targetField: string, config: ValueResolverConfig): Loo
     case 'TestCaseTypeId': return config.types;
     case 'OwnerId': return config.users.map(u => ({ id: u.id, name: u.fullName }));
     case 'ComponentIds': return config.components;
-    default: return [];
+    default:
+      // Check custom property lists
+      if (config.customPropertyListEntries?.has(targetField)) {
+        return config.customPropertyListEntries.get(targetField)!;
+      }
+      return [];
   }
 }
 

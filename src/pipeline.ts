@@ -74,6 +74,9 @@ export async function runPipeline(
   }
   process.stdout.write(`  ${BOLD}Source File:${RESET}   ${config.sourceFile}\n`);
   process.stdout.write(`  ${BOLD}Dry Run:${RESET}       ${config.dryRun ? 'Yes' : 'No'}\n`);
+  if (config.rootFolder) {
+    process.stdout.write(`  ${BOLD}Root Folder:${RESET}   ${config.rootFolder}\n`);
+  }
   process.stdout.write(`${CYAN}${'─'.repeat(35)}${RESET}\n\n`);
 
   // Phase 1: Connect & Authenticate
@@ -378,6 +381,19 @@ export async function runPipeline(
   }
 
   logger.info(`Phase 8: ${config.dryRun ? 'Dry-run' : 'Importing'} ${transformResult.testCases.length} test cases...`);
+
+  // Apply root folder prefix if configured
+  if (config.rootFolder) {
+    const separator = mappingResult.folderMapping?.pathSeparator ?? '/';
+    for (const tc of transformResult.testCases) {
+      if (tc.folderPath) {
+        tc.folderPath = `${config.rootFolder}${separator}${tc.folderPath}`;
+      } else {
+        tc.folderPath = config.rootFolder;
+      }
+    }
+    logger.info(`Root folder: "${config.rootFolder}" — all test cases will be imported under this folder.`);
+  }
 
   const importEngine = createImportEngine({
     client: spiraClient,

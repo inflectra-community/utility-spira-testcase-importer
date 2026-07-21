@@ -28,6 +28,7 @@ export const ImporterConfigSchema = z.object({
   sourceFile: z.string().min(1, 'Source file path is required'),
   dryRun: z.boolean(),
   logFile: z.string().optional(),
+  rootFolder: z.string().optional(),
 });
 
 // --- TypeScript Interfaces (inferred from schemas) ---

@@ -18,9 +18,9 @@ program
   .name('spira-import')
   .description('LLM-assisted artifact importer for Spira (test cases, requirements, and more)')
   .version('0.1.0')
-  .requiredOption('--source-file <path>', 'Path to the Excel file containing test case data')
-  .requiredOption('--provider <provider>', 'LLM provider: openai, anthropic, or bedrock')
-  .requiredOption('--model <model>', 'LLM model name (e.g., gpt-4o, claude-sonnet-4-20250514)')
+  .option('--source-file <path>', 'Path to the Excel file (env: SOURCE_FILE)')
+  .option('--provider <provider>', 'LLM provider: openai, anthropic, or bedrock (env: LLM_PROVIDER)')
+  .option('--model <model>', 'LLM model name (env: LLM_MODEL)')
   .option('--spira-url <url>', 'Spira instance base URL (env: SPIRA_URL)')
   .option('--username <username>', 'Spira username (env: SPIRA_USERNAME)')
   .option('--api-key <key>', 'Spira API key (env: SPIRA_API_KEY)')
@@ -30,6 +30,7 @@ program
   .option('--dry-run', 'Validate and transform without importing to Spira', false)
   .option('--log-file <path>', 'Custom log file output path')
   .option('--sheet <name>', 'Worksheet name to use (skips interactive selection)')
+  .option('--root-folder <name>', 'Root folder for imported test cases (env: ROOT_FOLDER)')
   .option('--artifact-type <type>', `Artifact type to import: ${getSupportedArtifactTypes().join(', ')}`, 'test-case')
   .action(async (options) => {
     const logger = createLogger();
@@ -47,6 +48,7 @@ program
         sourceFile: options.sourceFile,
         dryRun: options.dryRun,
         logFile: options.logFile,
+        rootFolder: options.rootFolder,
       };
 
       const config = loadConfig(cliArgs);
