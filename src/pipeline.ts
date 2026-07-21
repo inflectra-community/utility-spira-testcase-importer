@@ -227,6 +227,36 @@ export async function runPipeline(
     mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata, 5, contextLines.join('\n'));
     // Merge heuristic value lookups into the LLM result
     mergeLookupMaps(mappingResult, preAnalysis);
+
+    // Override LLM field mappings for columns the heuristics already resolved
+    // The LLM was told to preserve them but may not have — force the heuristic answers.
+    const heuristicResolved = new Map(preAnalysis.resolvedMappings.map(m => [m.sourceColumn, m]));
+    for (let i = 0; i < mappingResult.fieldMappings.length; i++) {
+      const fm = mappingResult.fieldMappings[i];
+      const heuristic = heuristicResolved.get(fm.sourceColumn);
+      if (heuristic) {
+        const lookupMap = preAnalysis.valueLookups.get(heuristic.targetField);
+        mappingResult.fieldMappings[i] = {
+          sourceColumn: fm.sourceColumn,
+          targetField: heuristic.targetField,
+          transformType: heuristic.targetField === '__Ignore__' ? 'ignore' : (lookupMap ? 'lookup' : 'direct'),
+          lookupMap,
+        };
+      }
+    }
+    // Also remove step columns from fieldMappings — they're handled by testStepMapping
+    const stepColumns = new Set<string>();
+    if (preAnalysis.structure.stepStructure.stepNumberColumn) stepColumns.add(preAnalysis.structure.stepStructure.stepNumberColumn);
+    if (preAnalysis.structure.stepStructure.stepDescriptionColumn) stepColumns.add(preAnalysis.structure.stepStructure.stepDescriptionColumn);
+    if (preAnalysis.structure.stepStructure.stepExpectedResultColumn) stepColumns.add(preAnalysis.structure.stepStructure.stepExpectedResultColumn);
+    if (stepColumns.size > 0) {
+      mappingResult.fieldMappings = mappingResult.fieldMappings.filter(fm => !stepColumns.has(fm.sourceColumn));
+    }
+    // Ensure folder column is handled via folderMapping, not fieldMappings
+    if (preAnalysis.structure.folderStructure.detected && preAnalysis.structure.folderStructure.column) {
+      const folderCol = preAnalysis.structure.folderStructure.column;
+      mappingResult.fieldMappings = mappingResult.fieldMappings.filter(fm => fm.sourceColumn !== folderCol);
+    }
     // Ensure heuristic structure detection is preserved (LLM may not return step/folder config)
     if (preAnalysis.structure.stepStructure.mode !== 'none') {
       const step = preAnalysis.structure.stepStructure;
