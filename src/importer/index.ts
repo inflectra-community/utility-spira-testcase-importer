@@ -240,7 +240,25 @@ async function importSingleTestCase(
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    throw new ImportPhaseError(`Test case creation failed: ${errorMessage}`, 'testcase');
+
+    // Retry without folder if folder assignment failed (folder may be soft-deleted)
+    if (errorMessage.includes('TestCaseFolderId') || errorMessage.includes('Folder Id')) {
+      logger.warn(`Folder assignment failed for "${testCase.name}" — retrying at root level`);
+      delete request.TestCaseFolderId;
+      try {
+        const response = await client.createTestCase(request);
+        testCaseId = response.TestCaseId;
+        logger.info(`Created test case "${testCase.name}" at root (ID: ${testCaseId})`, {
+          sourceRowIndex: testCase.sourceRowIndex,
+          testCaseId,
+        });
+      } catch (retryErr) {
+        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        throw new ImportPhaseError(`Test case creation failed (retry without folder): ${retryMsg}`, 'testcase');
+      }
+    } else {
+      throw new ImportPhaseError(`Test case creation failed: ${errorMessage}`, 'testcase');
+    }
   }
 
   // Step 3: Add test steps if present
