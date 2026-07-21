@@ -313,7 +313,7 @@ export function createMappingEngine(config: LLMConfig): LLMMappingEngine {
       if (preAnalysisContext) {
         prompt = preAnalysisContext + '\n\n' + prompt;
       }
-      console.log(`[TOKEN] Total LLM prompt: ${prompt.length} chars (~${Math.ceil(prompt.length / 4)} tokens)`);
+      // Token usage logged by pipeline — engine doesn't have logger access
 
       return withRetry(async () => {
         const { object } = await generateObject({

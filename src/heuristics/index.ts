@@ -32,7 +32,7 @@ export function analyzeSpreadsheet(
   const { fieldDefinitions, metadata } = config;
 
   // Phase 1: Structure detection
-  const structure = detectStructure(sheet.headers, sheet.rows);
+  let structure = detectStructure(sheet.headers, sheet.rows);
 
   // Columns claimed by structure detection (won't be matched again)
   const structureClaimedColumns = new Set<string>();
@@ -47,15 +47,16 @@ export function analyzeSpreadsheet(
   }
   if (structure.folderStructure.detected && structure.folderStructure.column) {
     // Don't claim folder column if a custom property with the same name exists
-    // (custom property exact match is a stronger signal than structural folder detection)
     const folderCol = structure.folderStructure.column;
     const cpNames = metadata.customProperties.map(cp => cp.name?.toLowerCase()).filter(Boolean);
     if (!cpNames.includes(folderCol.toLowerCase())) {
       structureClaimedColumns.add(folderCol);
     } else {
-      // Override: treat as custom property, not folder
-      structure.folderStructure.detected = false;
-      structure.folderStructure.column = undefined;
+      // Custom property takes priority — create a new structure without folder detection
+      structure = {
+        ...structure,
+        folderStructure: { detected: false, confidence: 0 },
+      };
     }
   }
 

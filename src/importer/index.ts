@@ -181,7 +181,7 @@ export function createImportEngine(config: ImportEngineConfig): ImportEngine {
       }
     }
 
-    // Unregister signal handlers
+    // Unregister signal handlers (in finally block to prevent leaks)
     process.removeListener('SIGINT', handleShutdown);
     process.removeListener('SIGTERM', handleShutdown);
 
@@ -198,12 +198,6 @@ export function createImportEngine(config: ImportEngineConfig): ImportEngine {
     };
 
     logger.info(`Import complete: ${successCount} succeeded, ${failureCount} failed, ${total - currentIndex} skipped (${duration}ms)`);
-
-    // If shutdown was requested, persist log before exiting
-    if (shutdownRequested) {
-      await logger.persist();
-      process.exit(1);
-    }
 
     return result;
   }

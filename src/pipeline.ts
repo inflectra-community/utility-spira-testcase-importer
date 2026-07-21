@@ -548,7 +548,9 @@ function convertPreAnalysisToMapping(preAnalysis: PreAnalysisResult): MappingRes
     fieldMappings,
     testStepMapping,
     folderMapping,
-    confidence: Math.min(...preAnalysis.resolvedMappings.map(m => m.confidence), 1.0),
+    confidence: preAnalysis.resolvedMappings.length > 0
+      ? Math.min(...preAnalysis.resolvedMappings.map(m => m.confidence))
+      : 1.0,
     unmappedSourceColumns: preAnalysis.unresolvedColumns,
     unmappedTargetFields: [],
     notes: ['Mapping resolved entirely by heuristic pre-analysis (no LLM call).'],
