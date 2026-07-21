@@ -337,11 +337,12 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
    * POST /projects/{project_id}/test-cases
    */
   async function createTestCase(testCase: CreateTestCaseRequest): Promise<{ TestCaseId: number }> {
-    return request<{ TestCaseId: number }>(
+    const raw = await request<any>(
       'POST',
       `/projects/${config.projectId}/test-cases`,
       testCase,
     );
+    return { TestCaseId: raw.TestCaseId ?? raw.testCaseId };
   }
 
   /**
@@ -361,11 +362,17 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
    * POST /projects/{project_id}/test-folders
    */
   async function createTestFolder(folder: CreateFolderRequest): Promise<TestCaseFolder> {
-    return request<TestCaseFolder>(
+    const raw = await request<any>(
       'POST',
       `/projects/${config.projectId}/test-folders`,
       folder,
     );
+    return {
+      testCaseFolderId: raw.TestCaseFolderId ?? raw.testCaseFolderId,
+      name: raw.Name ?? raw.name,
+      parentTestCaseFolderId: raw.ParentTestCaseFolderId ?? raw.parentTestCaseFolderId,
+      indentLevel: raw.IndentLevel ?? raw.indentLevel ?? '0',
+    };
   }
 
   return {
