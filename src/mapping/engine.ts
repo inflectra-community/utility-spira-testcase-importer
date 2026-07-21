@@ -307,10 +307,13 @@ export function createMappingEngine(config: LLMConfig): LLMMappingEngine {
       sampleRowCount: number = DEFAULT_SAMPLE_ROW_COUNT,
       preAnalysisContext?: string,
     ): Promise<MappingResult> {
+      // TODO: Token optimisation — consider skipping buildMappingPrompt entirely when
+      // preAnalysisContext is comprehensive enough (requires stronger model or better schema hints)
       let prompt = buildMappingPrompt(sourceData, templateMetadata, sampleRowCount);
       if (preAnalysisContext) {
         prompt = preAnalysisContext + '\n\n' + prompt;
       }
+      console.log(`[TOKEN] Total LLM prompt: ${prompt.length} chars (~${Math.ceil(prompt.length / 4)} tokens)`);
 
       return withRetry(async () => {
         const { object } = await generateObject({

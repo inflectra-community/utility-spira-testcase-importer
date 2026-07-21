@@ -224,7 +224,19 @@ export async function runPipeline(
     contextLines.push('- IMPORTANT: This is an import from an external system into Spira. The source data has its own ID space (e.g., "TC-7", "REQ-123"). These are NOT Spira IDs. Columns named "Id", "ID", "Test ID", "TC_ID" etc. are historical source identifiers. If a text-type custom property exists for storing source references (e.g., "Source Test ID"), map the ID column there. Otherwise ignore it.');
     contextLines.push('- Columns containing file paths, screenshots, or attachment references cannot be imported via the API. Mark them as "ignore".');
 
-    mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata, 5, contextLines.join('\n'));
+    const preAnalysisContextStr = contextLines.join('\n');
+
+    // TODO: Token optimisation — when unresolved columns are few (<= 3), consider a slim prompt
+    // that omits the full buildMappingPrompt and sends only the context + schema instructions.
+    // Current cost: ~3K tokens per LLM call (acceptable for single imports).
+    // Future considerations:
+    //   - Per-model token budgets (Nova Lite is cheap, Claude Sonnet is 60x more expensive)
+    //   - Batch import scenarios (multiple files) would benefit from slim prompts
+    //   - Track token usage per session for cost visibility
+    //   - The slim prompt (631 tokens) works conceptually but Nova Lite can't parse the response
+    //     without full schema guidance — stronger models may handle it fine.
+    logger.info(`LLM context: ${preAnalysisContextStr.length} chars (~${Math.ceil(preAnalysisContextStr.length / 4)} tokens). Full prompt appended.`);
+    mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata, 5, preAnalysisContextStr);
     // Merge heuristic value lookups into the LLM result
     mergeLookupMaps(mappingResult, preAnalysis);
 
