@@ -210,7 +210,19 @@ function buildSummary(
     lines.push(`  ${GREEN}Values resolved:${RESET} ${totalValues} unique values mapped to IDs`);
   }
   if (valueResult.unresolvedValues.length > 0) {
-    lines.push(`  ${YELLOW}Unresolved values:${RESET} ${valueResult.unresolvedValues.length}`);
+    lines.push(`  ${YELLOW}${BOLD}Unresolved values:${RESET} ${valueResult.unresolvedValues.length} value(s) have no match in Spira`);
+    // Group by field
+    const byField = new Map<string, string[]>();
+    for (const uv of valueResult.unresolvedValues) {
+      if (!byField.has(uv.field)) byField.set(uv.field, []);
+      byField.get(uv.field)!.push(uv.sourceValue);
+    }
+    for (const [field, values] of byField) {
+      const preview = values.slice(0, 5).map(v => `"${v}"`).join(', ');
+      const more = values.length > 5 ? ` (+${values.length - 5} more)` : '';
+      lines.push(`    ${YELLOW}!${RESET} ${BOLD}${field}${RESET}: ${preview}${more}`);
+      lines.push(`      ${DIM}These values will be skipped unless the Spira list is updated.${RESET}`);
+    }
   }
 
   // Unresolved columns
