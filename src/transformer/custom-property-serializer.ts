@@ -49,14 +49,20 @@ export function serializeCustomProperty(
       break;
 
     // Integer (2) → IntegerValue
-    case 2:
-      result.IntegerValue = Number(propertyValue.value);
+    case 2: {
+      const numVal = Number(propertyValue.value);
+      if (isNaN(numVal)) return result;
+      result.IntegerValue = numVal;
       break;
+    }
 
     // Decimal (3) → IntegerValue
-    case 3:
-      result.IntegerValue = Number(propertyValue.value);
+    case 3: {
+      const numVal = Number(propertyValue.value);
+      if (isNaN(numVal)) return result;
+      result.IntegerValue = numVal;
       break;
+    }
 
     // Boolean (4) → BooleanValue
     case 4:
@@ -69,18 +75,29 @@ export function serializeCustomProperty(
       break;
 
     // List (6) → IntegerListValue as single-element array
-    case 6:
-      result.IntegerListValue = [Number(propertyValue.value)];
+    case 6: {
+      const numVal = Number(propertyValue.value);
+      if (isNaN(numVal)) {
+        // Value couldn't be resolved to an ID — skip this property
+        return result; // Returns just PropertyNumber with no value field
+      }
+      result.IntegerListValue = [numVal];
       break;
+    }
 
     // MultiList (7) → IntegerListValue
-    case 7:
+    case 7: {
       if (Array.isArray(propertyValue.value)) {
-        result.IntegerListValue = propertyValue.value.map(Number);
+        const nums = propertyValue.value.map(Number).filter(n => !isNaN(n));
+        if (nums.length === 0) return result;
+        result.IntegerListValue = nums;
       } else {
-        result.IntegerListValue = [Number(propertyValue.value)];
+        const numVal = Number(propertyValue.value);
+        if (isNaN(numVal)) return result;
+        result.IntegerListValue = [numVal];
       }
       break;
+    }
 
     // User (8) → IntegerValue
     case 8:

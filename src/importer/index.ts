@@ -405,12 +405,17 @@ function buildTestCaseRequest(
       .map((cp) => {
         const definition = defsByNumber.get(cp.propertyNumber);
         if (!definition) {
-          // Skip unknown custom properties — shouldn't happen after validation
           return null;
         }
         return serializeCustomProperty(cp, definition);
       })
-      .filter((p): p is NonNullable<typeof p> => p !== null);
+      .filter((p): p is NonNullable<typeof p> => p !== null)
+      .filter((p) => {
+        // Exclude properties with no value field set (unresolved values)
+        return p.StringValue !== undefined || p.IntegerValue !== undefined ||
+          p.BooleanValue !== undefined || p.DateTimeValue !== undefined ||
+          p.IntegerListValue !== undefined;
+      });
   }
 
   return request;
