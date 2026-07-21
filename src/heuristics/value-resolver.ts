@@ -90,6 +90,7 @@ function resolveOneValue(
 
   // Strategy 1: Exact match (case-insensitive)
   for (const entry of entries) {
+    if (!entry.name) continue;
     if (sourceLower === entry.name.toLowerCase()) {
       return { id: entry.id, name: entry.name, confidence: 1.0 };
     }
@@ -97,6 +98,7 @@ function resolveOneValue(
 
   // Strategy 2: Strip numeric prefix from target, then match
   for (const entry of entries) {
+    if (!entry.name) continue;
     const targetStripped = entry.name.replace(NUMERIC_PREFIX_RE, '').toLowerCase();
     if (targetStripped.length > 0 && sourceLower === targetStripped) {
       return { id: entry.id, name: entry.name, confidence: 0.95 };
@@ -119,6 +121,7 @@ function resolveOneValue(
 
   // Strategy 3: Source is substring of target name
   for (const entry of entries) {
+    if (!entry.name) continue;
     if (entry.name.toLowerCase().includes(sourceLower) && sourceLower.length >= 3) {
       return { id: entry.id, name: entry.name, confidence: 0.85 };
     }
@@ -126,6 +129,7 @@ function resolveOneValue(
 
   // Strategy 4: Target name is substring of source
   for (const entry of entries) {
+    if (!entry.name) continue;
     const entryLower = entry.name.toLowerCase();
     if (sourceLower.includes(entryLower) && entryLower.length >= 3) {
       return { id: entry.id, name: entry.name, confidence: 0.8 };
@@ -139,6 +143,7 @@ function resolveOneValue(
   // Strategy 5: Levenshtein distance
   let bestMatch: { id: number; name: string; confidence: number } | null = null;
   for (const entry of entries) {
+    if (!entry.name) continue;
     const sim = levenshteinSimilarity(sourceLower, entry.name.toLowerCase());
     if (sim > 0.7 && (!bestMatch || sim > bestMatch.confidence)) {
       bestMatch = { id: entry.id, name: entry.name, confidence: sim };

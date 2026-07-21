@@ -123,17 +123,30 @@ function buildSummary(
   unresolvedColumns: string[],
   fullyResolved: boolean,
 ): string {
+  // ANSI colour codes
+  const GREEN = '\x1b[32m';
+  const YELLOW = '\x1b[33m';
+  const RED = '\x1b[31m';
+  const CYAN = '\x1b[36m';
+  const DIM = '\x1b[2m';
+  const BOLD = '\x1b[1m';
+  const RESET = '\x1b[0m';
+
   const lines: string[] = [];
 
-  lines.push('─── Heuristic Pre-Analysis Summary ───');
+  lines.push(`${BOLD}${CYAN}─── Heuristic Pre-Analysis Summary ───${RESET}`);
   lines.push('');
 
   // Structure
   if (structure.stepStructure.mode !== 'none') {
-    lines.push(`  Step mode: ${structure.stepStructure.mode} (confidence: ${(structure.stepStructure.confidence * 100).toFixed(0)}%)`);
+    const conf = structure.stepStructure.confidence;
+    const colour = conf >= 0.8 ? GREEN : conf >= 0.6 ? YELLOW : RED;
+    lines.push(`  ${BOLD}Step mode:${RESET} ${structure.stepStructure.mode} ${colour}(${(conf * 100).toFixed(0)}%)${RESET}`);
   }
   if (structure.folderStructure.detected) {
-    lines.push(`  Folder column: "${structure.folderStructure.column}" (separator: "${structure.folderStructure.separator}")`);
+    const conf = structure.folderStructure.confidence;
+    const colour = conf >= 0.8 ? GREEN : conf >= 0.6 ? YELLOW : RED;
+    lines.push(`  ${BOLD}Folder column:${RESET} "${structure.folderStructure.column}" ${DIM}separator: "${structure.folderStructure.separator}"${RESET} ${colour}(${(conf * 100).toFixed(0)}%)${RESET}`);
   }
 
   // Resolved columns
@@ -141,15 +154,18 @@ function buildSummary(
   const medConfidence = matches.filter(m => m.confidence >= 0.7 && m.confidence < 0.9);
   if (highConfidence.length > 0) {
     lines.push('');
-    lines.push(`  Resolved (high confidence): ${highConfidence.length} columns`);
+    lines.push(`  ${GREEN}${BOLD}Resolved (high confidence): ${highConfidence.length} columns${RESET}`);
     for (const m of highConfidence) {
-      lines.push(`    "${m.sourceColumn}" → ${m.targetField} (${m.matchReason})`);
+      const bar = confidenceBar(m.confidence);
+      lines.push(`    ${GREEN}${bar}${RESET} "${m.sourceColumn}" ${DIM}->${RESET} ${BOLD}${m.targetField}${RESET} ${DIM}(${m.matchReason})${RESET}`);
     }
   }
   if (medConfidence.length > 0) {
-    lines.push(`  Resolved (medium confidence): ${medConfidence.length} columns`);
+    lines.push('');
+    lines.push(`  ${YELLOW}${BOLD}Resolved (medium confidence): ${medConfidence.length} columns${RESET}`);
     for (const m of medConfidence) {
-      lines.push(`    "${m.sourceColumn}" → ${m.targetField} (${m.matchReason}, ${(m.confidence * 100).toFixed(0)}%)`);
+      const bar = confidenceBar(m.confidence);
+      lines.push(`    ${YELLOW}${bar}${RESET} "${m.sourceColumn}" ${DIM}->${RESET} ${BOLD}${m.targetField}${RESET} ${DIM}(${m.matchReason}, ${(m.confidence * 100).toFixed(0)}%)${RESET}`);
     }
   }
 
@@ -159,25 +175,37 @@ function buildSummary(
     totalValues += Object.keys(map).length;
   }
   if (totalValues > 0) {
-    lines.push(`  Values resolved: ${totalValues} unique values mapped to IDs`);
+    lines.push('');
+    lines.push(`  ${GREEN}Values resolved:${RESET} ${totalValues} unique values mapped to IDs`);
   }
   if (valueResult.unresolvedValues.length > 0) {
-    lines.push(`  Unresolved values: ${valueResult.unresolvedValues.length}`);
+    lines.push(`  ${YELLOW}Unresolved values:${RESET} ${valueResult.unresolvedValues.length}`);
   }
 
   // Unresolved columns
   if (unresolvedColumns.length > 0) {
     lines.push('');
-    lines.push(`  Needs LLM: ${unresolvedColumns.length} columns`);
+    lines.push(`  ${RED}${BOLD}Needs LLM: ${unresolvedColumns.length} columns${RESET}`);
     for (const col of unresolvedColumns) {
-      lines.push(`    "${col}"`);
+      lines.push(`    ${RED}?${RESET} "${col}"`);
     }
   }
 
   lines.push('');
-  lines.push(fullyResolved
-    ? '  ✓ Fully resolved — LLM call can be skipped'
-    : `  → LLM needed for ${unresolvedColumns.length} column(s)`);
+  if (fullyResolved) {
+    lines.push(`  ${GREEN}${BOLD}All columns resolved — LLM call will be skipped${RESET}`);
+  } else {
+    lines.push(`  ${CYAN}LLM will handle ${unresolvedColumns.length} remaining column(s)${RESET}`);
+  }
 
   return lines.join('\n');
+}
+
+/**
+ * Renders a small confidence bar: [||||    ] style
+ */
+function confidenceBar(confidence: number): string {
+  const filled = Math.round(confidence * 8);
+  const empty = 8 - filled;
+  return `[${'|'.repeat(filled)}${' '.repeat(empty)}]`;
 }

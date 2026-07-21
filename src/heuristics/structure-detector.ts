@@ -73,6 +73,7 @@ function detectSeparateRows(
   let stepNumberConfidence = 0;
 
   for (const header of headers) {
+    if (!header || typeof header !== 'string') continue;
     const headerLower = header.toLowerCase().trim();
 
     // Check if column name matches step number patterns
@@ -165,6 +166,7 @@ function findColumnByPatterns(
   exclude: string[],
 ): string | null {
   for (const header of headers) {
+    if (!header || typeof header !== 'string') continue;
     if (exclude.includes(header)) continue;
     const headerLower = header.toLowerCase().trim();
     for (const pattern of patterns) {
@@ -245,6 +247,7 @@ function detectFolderStructure(
   let bestCandidate: FolderStructure = { detected: false, confidence: 0 };
 
   for (const header of headers) {
+    if (!header || typeof header !== 'string') continue;
     const headerLower = header.toLowerCase().trim();
 
     // Bonus for name matching folder-like terms

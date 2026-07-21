@@ -116,7 +116,9 @@ export async function runPipeline(
 
   // Phase 3.5: Heuristic Pre-Analysis
   logger.info('Phase 3.5: Running heuristic pre-analysis...');
-  const preAnalysis = analyzeSpreadsheet(selectedSheet, {
+  let preAnalysis;
+  try {
+    preAnalysis = analyzeSpreadsheet(selectedSheet, {
     fieldDefinitions: strategy?.getFieldDefinitions() ?? [
       { name: 'Name', label: 'Name', type: 'string', required: true, description: 'Test case name' },
       { name: 'Description', label: 'Description', type: 'string', required: false, description: 'Description' },
@@ -139,9 +141,14 @@ export async function runPipeline(
         { fieldName: 'TestCaseStatusId', label: 'Statuses', entries: metadata.statuses.map(s => ({ id: s.testCaseStatusId, name: s.name, active: s.active })) },
         { fieldName: 'TestCaseTypeId', label: 'Types', entries: metadata.types.map(t => ({ id: t.testCaseTypeId, name: t.name, active: t.active })) },
       ],
-      existingFolders: metadata.existingFolders.map(f => ({ id: f.testCaseFolderId, name: f.name, parentId: f.parentTestCaseFolderId, indentLevel: f.indentLevel })),
+      existingFolders: (metadata.existingFolders ?? []).map(f => ({ id: f.testCaseFolderId, name: f.name, parentId: f.parentTestCaseFolderId, indentLevel: f.indentLevel })),
     },
   });
+  } catch (heuristicError) {
+    const msg = heuristicError instanceof Error ? heuristicError.stack ?? heuristicError.message : String(heuristicError);
+    logger.warn(`Heuristic pre-analysis failed (falling back to full LLM): ${msg}`);
+    preAnalysis = { fullyResolved: false, resolvedMappings: [], valueLookups: new Map(), structure: { stepStructure: { mode: 'none' as const, confidence: 0 }, folderStructure: { detected: false, confidence: 0 } }, unresolvedColumns: selectedSheet.headers, unresolvedValues: [], summary: '  Heuristic analysis failed - using full LLM mode.' };
+  }
   process.stdout.write('\n' + preAnalysis.summary + '\n\n');
 
   // Phase 4: LLM-Assisted Mapping (or skip if heuristics fully resolved)
@@ -276,32 +283,47 @@ export async function runPipeline(
  * Displays the mapping summary to the terminal.
  */
 function displayMappingSummary(mapping: MappingResult): void {
+  const GREEN = '\x1b[32m';
+  const YELLOW = '\x1b[33m';
+  const RED = '\x1b[31m';
+  const DIM = '\x1b[2m';
+  const BOLD = '\x1b[1m';
+  const RESET = '\x1b[0m';
+  const CYAN = '\x1b[36m';
+
   process.stdout.write('\n');
-  process.stdout.write('┌─────────────────────────────────────────────────────────────┐\n');
-  process.stdout.write('│  Proposed Field Mapping                                     │\n');
-  process.stdout.write('├─────────────────────────────────────────────────────────────┤\n');
+  process.stdout.write(`${CYAN}${BOLD}┌─────────────────────────────────────────────────────────────┐${RESET}\n`);
+  process.stdout.write(`${CYAN}${BOLD}│  Proposed Field Mapping                                     │${RESET}\n`);
+  process.stdout.write(`${CYAN}├─────────────────────────────────────────────────────────────┤${RESET}\n`);
 
   for (const fm of mapping.fieldMappings) {
-    const arrow = fm.transformType === 'ignore' ? ' ✕ ' : ' → ';
-    const line = `│  ${fm.sourceColumn.padEnd(25)}${arrow}${fm.targetField.padEnd(25)} │\n`;
-    process.stdout.write(line);
-  }
-
-  if (mapping.unmappedSourceColumns.length > 0) {
-    process.stdout.write('├─────────────────────────────────────────────────────────────┤\n');
-    process.stdout.write(`│  Unmapped: ${mapping.unmappedSourceColumns.join(', ').slice(0, 47)}│\n`);
-  }
-
-  if (mapping.notes.length > 0) {
-    process.stdout.write('├─────────────────────────────────────────────────────────────┤\n');
-    for (const note of mapping.notes.slice(0, 3)) {
-      process.stdout.write(`│  ℹ️  ${note.slice(0, 55)}│\n`);
+    if (fm.transformType === 'ignore') {
+      process.stdout.write(`${DIM}│  ${fm.sourceColumn.padEnd(25)} x  ignore${' '.repeat(20)}│${RESET}\n`);
+    } else {
+      const colour = fm.transformType === 'lookup' ? YELLOW : GREEN;
+      const label = fm.transformType === 'lookup' ? `${fm.targetField} ${DIM}(lookup)${RESET}` : fm.targetField;
+      process.stdout.write(`│  ${fm.sourceColumn.padEnd(25)}${colour}->${RESET} ${label.padEnd(25)}│\n`);
     }
   }
 
-  process.stdout.write(`├─────────────────────────────────────────────────────────────┤\n`);
-  process.stdout.write(`│  Confidence: ${(mapping.confidence * 100).toFixed(0)}%                                          │\n`);
-  process.stdout.write('└─────────────────────────────────────────────────────────────┘\n');
+  if (mapping.unmappedSourceColumns.length > 0) {
+    process.stdout.write(`${CYAN}├─────────────────────────────────────────────────────────────┤${RESET}\n`);
+    process.stdout.write(`│  ${RED}Unmapped:${RESET} ${mapping.unmappedSourceColumns.join(', ').slice(0, 47)}│\n`);
+  }
+
+  if (mapping.notes.length > 0) {
+    process.stdout.write(`${CYAN}├─────────────────────────────────────────────────────────────┤${RESET}\n`);
+    for (const note of mapping.notes.slice(0, 3)) {
+      process.stdout.write(`│  ${DIM}${note.slice(0, 57)}${RESET}│\n`);
+    }
+  }
+
+  // Confidence with colour
+  const confPct = (mapping.confidence * 100).toFixed(0);
+  const confColour = mapping.confidence >= 0.85 ? GREEN : mapping.confidence >= 0.6 ? YELLOW : RED;
+  process.stdout.write(`${CYAN}├─────────────────────────────────────────────────────────────┤${RESET}\n`);
+  process.stdout.write(`│  Confidence: ${confColour}${BOLD}${confPct}%${RESET}${' '.repeat(45 - confPct.length)}│\n`);
+  process.stdout.write(`${CYAN}${BOLD}└─────────────────────────────────────────────────────────────┘${RESET}\n`);
   process.stdout.write('\n');
 }
 
@@ -312,27 +334,34 @@ function displayImportSummary(
   result: { totalAttempted: number; successCount: number; failureCount: number; failures: { sourceRowIndex: number; testCaseName: string; error: string; phase: string }[]; createdFolders: string[]; duration: number },
   dryRun: boolean
 ): void {
+  const GREEN = '\x1b[32m';
+  const RED = '\x1b[31m';
+  const CYAN = '\x1b[36m';
+  const DIM = '\x1b[2m';
+  const BOLD = '\x1b[1m';
+  const RESET = '\x1b[0m';
+
   const mode = dryRun ? 'DRY-RUN ' : '';
-  process.stdout.write('═══════════════════════════════════════════════════════════════\n');
-  process.stdout.write(`  ${mode}Import Summary\n`);
-  process.stdout.write('═══════════════════════════════════════════════════════════════\n');
-  process.stdout.write(`  Total attempted:  ${result.totalAttempted}\n`);
-  process.stdout.write(`  Successful:       ${result.successCount}\n`);
-  process.stdout.write(`  Failed:           ${result.failureCount}\n`);
+  process.stdout.write(`${CYAN}${BOLD}${'='.repeat(63)}${RESET}\n`);
+  process.stdout.write(`  ${BOLD}${mode}Import Summary${RESET}\n`);
+  process.stdout.write(`${CYAN}${BOLD}${'='.repeat(63)}${RESET}\n`);
+  process.stdout.write(`  Total attempted:  ${BOLD}${result.totalAttempted}${RESET}\n`);
+  process.stdout.write(`  Successful:       ${GREEN}${BOLD}${result.successCount}${RESET}\n`);
+  process.stdout.write(`  Failed:           ${result.failureCount > 0 ? RED + BOLD : DIM}${result.failureCount}${RESET}\n`);
   process.stdout.write(`  Folders created:  ${result.createdFolders.length}\n`);
   process.stdout.write(`  Duration:         ${(result.duration / 1000).toFixed(1)}s\n`);
 
   if (result.failures.length > 0) {
-    process.stdout.write('\n  Failures:\n');
+    process.stdout.write(`\n  ${RED}${BOLD}Failures:${RESET}\n`);
     for (const f of result.failures.slice(0, 10)) {
-      process.stdout.write(`    • Row ${f.sourceRowIndex} "${f.testCaseName}": ${f.error}\n`);
+      process.stdout.write(`    ${RED}x${RESET} Row ${f.sourceRowIndex} "${f.testCaseName}": ${DIM}${f.error}${RESET}\n`);
     }
     if (result.failures.length > 10) {
-      process.stdout.write(`    ... and ${result.failures.length - 10} more (see log file)\n`);
+      process.stdout.write(`    ${DIM}... and ${result.failures.length - 10} more (see log file)${RESET}\n`);
     }
   }
 
-  process.stdout.write('═══════════════════════════════════════════════════════════════\n');
+  process.stdout.write(`${CYAN}${BOLD}${'='.repeat(63)}${RESET}\n`);
 }
 
 /**
