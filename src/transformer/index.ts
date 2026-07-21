@@ -442,8 +442,13 @@ function extractFolderPath(
 
 /**
  * Groups rows by parent test case for separate-rows step extraction mode.
- * In this mode, consecutive rows that lack a test case name are treated as
- * test steps belonging to the preceding row that has a name.
+ *
+ * Grouping strategy:
+ * - If a groupingColumn is specified (detected by heuristics), rows sharing the same
+ *   value in that column belong to the same test case. The first row in each group
+ *   provides the test case fields; subsequent rows provide additional test steps.
+ * - If no groupingColumn, falls back to the old logic: rows without a Name value
+ *   are treated as steps belonging to the preceding row that has a Name.
  */
 function transformSeparateRowsMode(
   rows: Record<string, unknown>[],
@@ -454,58 +459,89 @@ function transformSeparateRowsMode(
   const errors: TransformationError[] = [];
   const warnings: TransformationWarning[] = [];
   const testCases: TransformedTestCase[] = [];
+  const stepConfig = mapping.testStepMapping!;
+  const groupingColumn = stepConfig.groupingColumn;
 
-  // Find the field mapping that targets "Name" to identify parent rows
-  const nameMapping = mapping.fieldMappings.find(
-    (fm) => fm.targetField.toLowerCase() === 'name'
-  );
+  if (groupingColumn) {
+    // Group by the designated column value
+    const groups = new Map<string, Record<string, unknown>[]>();
+    const groupOrder: string[] = [];
 
-  let currentTestCase: TransformedTestCase | null = null;
-
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const stepConfig = mapping.testStepMapping!;
-
-    // Determine if this row is a parent test case or a step row
-    const nameValue = nameMapping ? row[nameMapping.sourceColumn] : undefined;
-    const hasName = nameValue !== null && nameValue !== undefined && String(nameValue).trim() !== '';
-
-    if (hasName) {
-      // This is a parent test case row
-      if (currentTestCase) {
-        testCases.push(currentTestCase);
+    for (const row of rows) {
+      const key = String(row[groupingColumn] ?? '').trim();
+      if (!key) continue;
+      if (!groups.has(key)) {
+        groups.set(key, []);
+        groupOrder.push(key);
       }
-      currentTestCase = transformRow(row, i, mapping, metadata, errors, warnings, fieldMap);
+      groups.get(key)!.push(row);
+    }
 
-      // Also extract a step from this row if step columns are present
-      const step = extractStepFromRow(row, stepConfig);
-      if (step) {
-        step.position = currentTestCase.testSteps.length + 1;
-        currentTestCase.testSteps.push(step);
-      }
-    } else {
-      // This is a step row belonging to the current test case
-      if (!currentTestCase) {
-        warnings.push({
-          rowIndex: i,
-          field: 'testSteps',
-          message: `Row ${i} appears to be a test step but no parent test case precedes it`,
-          severity: 'warning',
-        });
-        continue;
+    for (const key of groupOrder) {
+      const groupRows = groups.get(key)!;
+      const firstRow = groupRows[0];
+
+      // Transform the first row as the test case
+      const testCase = transformRow(firstRow, rows.indexOf(firstRow), mapping, metadata, errors, warnings, fieldMap);
+
+      // Extract steps from ALL rows in the group (including first)
+      for (let i = 0; i < groupRows.length; i++) {
+        const step = extractStepFromRow(groupRows[i], stepConfig);
+        if (step) {
+          step.position = testCase.testSteps.length + 1;
+          testCase.testSteps.push(step);
+        }
       }
 
-      const step = extractStepFromRow(row, stepConfig);
-      if (step) {
-        step.position = currentTestCase.testSteps.length + 1;
-        currentTestCase.testSteps.push(step);
+      testCases.push(testCase);
+    }
+  } else {
+    // Fallback: group by Name presence (original logic)
+    const nameMapping = mapping.fieldMappings.find(
+      (fm) => fm.targetField.toLowerCase() === 'name'
+    );
+
+    let currentTestCase: TransformedTestCase | null = null;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+
+      const nameValue = nameMapping ? row[nameMapping.sourceColumn] : undefined;
+      const hasName = nameValue !== null && nameValue !== undefined && String(nameValue).trim() !== '';
+
+      if (hasName) {
+        if (currentTestCase) {
+          testCases.push(currentTestCase);
+        }
+        currentTestCase = transformRow(row, i, mapping, metadata, errors, warnings, fieldMap);
+
+        const step = extractStepFromRow(row, stepConfig);
+        if (step) {
+          step.position = currentTestCase.testSteps.length + 1;
+          currentTestCase.testSteps.push(step);
+        }
+      } else {
+        if (!currentTestCase) {
+          warnings.push({
+            rowIndex: i,
+            field: 'testSteps',
+            message: `Row ${i} appears to be a test step but no parent test case precedes it`,
+            severity: 'warning',
+          });
+          continue;
+        }
+
+        const step = extractStepFromRow(row, stepConfig);
+        if (step) {
+          step.position = currentTestCase.testSteps.length + 1;
+          currentTestCase.testSteps.push(step);
+        }
       }
     }
-  }
 
-  // Push the last test case
-  if (currentTestCase) {
-    testCases.push(currentTestCase);
+    if (currentTestCase) {
+      testCases.push(currentTestCase);
+    }
   }
 
   return { testCases, errors, warnings };

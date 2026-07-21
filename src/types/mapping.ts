@@ -21,6 +21,7 @@ export const TestStepMappingConfigSchema = z.object({
   expectedResultColumn: z.string().optional(),
   sampleDataColumn: z.string().optional(),
   stepDelimiter: z.string().optional(),
+  groupingColumn: z.string().optional(), // For separate-rows: column that identifies the parent test case
 });
 
 export const FolderMappingConfigSchema = z.object({

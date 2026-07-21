@@ -205,11 +205,45 @@ export async function runPipeline(
     for (const col of preAnalysis.unresolvedColumns) {
       contextLines.push(`- "${col}"`);
     }
-    contextLines.push('', 'For columns already resolved above, include them in your output with the SAME targetField and transformType "direct" or "lookup" as indicated. Focus your analysis on the unresolved columns.');
+    contextLines.push('');
+    contextLines.push('## Available custom properties you can map to:');
+    const cpNames = metadata.customProperties.map(cp => cp.name).filter(Boolean);
+    if (cpNames.length > 0) {
+      for (const name of cpNames) {
+        contextLines.push(`- "${name}"`);
+      }
+    } else {
+      contextLines.push('- (none defined)');
+    }
+    contextLines.push('');
+    contextLines.push('## Rules:');
+    contextLines.push('- For columns already resolved above, include them in your output with the SAME targetField and transformType.');
+    contextLines.push('- For unresolved columns: map to a standard Spira field, a custom property name from the list above, or set transformType to "ignore".');
+    contextLines.push('- If a column does NOT clearly map to any known field or custom property, set transformType to "ignore". Do NOT invent target fields.');
+    contextLines.push('- Use the exact custom property name as targetField (e.g., "Source Test ID", "Transaction Code").');
+    contextLines.push('- IMPORTANT: This is an import from an external system into Spira. The source data has its own ID space (e.g., "TC-7", "REQ-123"). These are NOT Spira IDs. Columns named "Id", "ID", "Test ID", "TC_ID" etc. are historical source identifiers. If a text-type custom property exists for storing source references (e.g., "Source Test ID"), map the ID column there. Otherwise ignore it.');
+    contextLines.push('- Columns containing file paths, screenshots, or attachment references cannot be imported via the API. Mark them as "ignore".');
 
     mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata, 5, contextLines.join('\n'));
     // Merge heuristic value lookups into the LLM result
     mergeLookupMaps(mappingResult, preAnalysis);
+    // Ensure heuristic structure detection is preserved (LLM may not return step/folder config)
+    if (!mappingResult.testStepMapping && preAnalysis.structure.stepStructure.mode !== 'none') {
+      const step = preAnalysis.structure.stepStructure;
+      mappingResult.testStepMapping = {
+        mode: step.mode,
+        descriptionColumn: step.mode === 'separate-rows' ? step.stepDescriptionColumn : step.inlineColumn,
+        expectedResultColumn: step.stepExpectedResultColumn,
+        groupingColumn: step.groupingColumn,
+        stepDelimiter: step.mode === 'inline' ? (step.inlineDelimiter === 'semicolon' ? ';' : '\n') : undefined,
+      };
+    }
+    if (!mappingResult.folderMapping && preAnalysis.structure.folderStructure.detected) {
+      mappingResult.folderMapping = {
+        sourceColumn: preAnalysis.structure.folderStructure.column!,
+        pathSeparator: preAnalysis.structure.folderStructure.separator ?? '/',
+      };
+    }
     logger.info(`LLM mapping generated with confidence: ${mappingResult.confidence}`);
   }
 
@@ -419,12 +453,27 @@ function convertPreAnalysisToMapping(preAnalysis: PreAnalysisResult): MappingRes
   const fieldMappings: FieldMapping[] = [];
 
   for (const match of preAnalysis.resolvedMappings) {
+    // Auto-ignored columns
+    if (match.targetField === '__Ignore__') {
+      fieldMappings.push({
+        sourceColumn: match.sourceColumn,
+        targetField: 'ignore',
+        transformType: 'ignore',
+      });
+      continue;
+    }
+
+    // Folder path columns are handled via folderMapping, not fieldMappings
+    if (match.targetField === '__FolderPath__') {
+      continue;
+    }
+
     const lookupMap = preAnalysis.valueLookups.get(match.targetField);
     const transformType = lookupMap ? 'lookup' : 'direct';
 
     fieldMappings.push({
       sourceColumn: match.sourceColumn,
-      targetField: match.targetField === '__FolderPath__' ? 'FolderPath' : match.targetField,
+      targetField: match.targetField,
       transformType,
       lookupMap,
     });
@@ -443,6 +492,7 @@ function convertPreAnalysisToMapping(preAnalysis: PreAnalysisResult): MappingRes
       mode: 'separate-rows' as const,
       descriptionColumn: step.stepDescriptionColumn,
       expectedResultColumn: step.stepExpectedResultColumn,
+      groupingColumn: step.groupingColumn,
     };
   } else if (step.mode === 'inline') {
     testStepMapping = {
