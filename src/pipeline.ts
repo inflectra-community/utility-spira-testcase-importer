@@ -179,7 +179,35 @@ export async function runPipeline(
   } else {
     logger.info(`Phase 4: Generating field mapping via LLM (${preAnalysis.unresolvedColumns.length} columns need LLM)...`);
     const mappingEngine = createMappingEngine(config.llm);
-    mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata);
+
+    // Build context so LLM knows what's already resolved
+    const contextLines: string[] = [
+      '# Pre-Analysis Context (already resolved — do NOT re-map these)',
+      '',
+      'The following columns have been matched deterministically:',
+    ];
+    for (const m of preAnalysis.resolvedMappings) {
+      contextLines.push(`- "${m.sourceColumn}" -> ${m.targetField} (${m.matchReason}, confidence ${(m.confidence * 100).toFixed(0)}%)`);
+    }
+    if (preAnalysis.structure.stepStructure.mode !== 'none') {
+      contextLines.push('', `Step structure detected: ${preAnalysis.structure.stepStructure.mode} mode`);
+      if (preAnalysis.structure.stepStructure.stepDescriptionColumn) {
+        contextLines.push(`- Step description column: "${preAnalysis.structure.stepStructure.stepDescriptionColumn}"`);
+      }
+      if (preAnalysis.structure.stepStructure.stepExpectedResultColumn) {
+        contextLines.push(`- Step expected result column: "${preAnalysis.structure.stepStructure.stepExpectedResultColumn}"`);
+      }
+    }
+    if (preAnalysis.structure.folderStructure.detected) {
+      contextLines.push('', `Folder column detected: "${preAnalysis.structure.folderStructure.column}" (separator: "${preAnalysis.structure.folderStructure.separator}")`);
+    }
+    contextLines.push('', '## Your task: map ONLY these remaining columns:', '');
+    for (const col of preAnalysis.unresolvedColumns) {
+      contextLines.push(`- "${col}"`);
+    }
+    contextLines.push('', 'For columns already resolved above, include them in your output with the SAME targetField and transformType "direct" or "lookup" as indicated. Focus your analysis on the unresolved columns.');
+
+    mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata, 5, contextLines.join('\n'));
     // Merge heuristic value lookups into the LLM result
     mergeLookupMaps(mappingResult, preAnalysis);
     logger.info(`LLM mapping generated with confidence: ${mappingResult.confidence}`);
@@ -320,8 +348,8 @@ function displayMappingSummary(mapping: MappingResult): void {
       process.stdout.write(`${DIM}│  ${fm.sourceColumn.padEnd(25)} x  ignore${' '.repeat(20)}│${RESET}\n`);
     } else {
       const colour = fm.transformType === 'lookup' ? YELLOW : GREEN;
-      const label = fm.transformType === 'lookup' ? `${fm.targetField} ${DIM}(lookup)${RESET}` : fm.targetField;
-      process.stdout.write(`│  ${fm.sourceColumn.padEnd(25)}${colour}->${RESET} ${label.padEnd(25)}│\n`);
+      const typeHint = fm.transformType === 'lookup' ? ` ${DIM}(lookup)${RESET}` : '';
+      process.stdout.write(`│  ${fm.sourceColumn.padEnd(25)}${colour}->${RESET} ${fm.targetField}${typeHint}\n`);
     }
   }
 

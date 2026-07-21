@@ -479,6 +479,6 @@ Produce a structured mapping result with the following structure:
 2. Use "lookup" when source values are text labels that need to be mapped to Spira IDs (e.g., priority names to priority IDs)
 3. Use "direct" when the source value can be used as-is in the target field
 4. Use "template" only when multiple source columns need to be combined into one target field
-5. For custom properties, use "Custom_XX" as the targetField where XX is the property number (zero-padded, e.g., Custom_01)
+5. For custom properties, use the EXACT custom property name as the targetField (e.g., "Transaction Code", "Precondition"). Do NOT use internal identifiers like "Custom_01".
 6. Match source values to list values case-insensitively when building lookupMaps`;
 }

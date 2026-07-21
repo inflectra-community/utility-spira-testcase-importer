@@ -25,6 +25,7 @@ export interface LLMMappingEngine {
     sourceData: SheetData,
     templateMetadata: TemplateMetadata,
     sampleRowCount?: number,
+    preAnalysisContext?: string,
   ): Promise<MappingResult>;
 
   retryMapping(
@@ -304,8 +305,12 @@ export function createMappingEngine(config: LLMConfig): LLMMappingEngine {
       sourceData: SheetData,
       templateMetadata: TemplateMetadata,
       sampleRowCount: number = DEFAULT_SAMPLE_ROW_COUNT,
+      preAnalysisContext?: string,
     ): Promise<MappingResult> {
-      const prompt = buildMappingPrompt(sourceData, templateMetadata, sampleRowCount);
+      let prompt = buildMappingPrompt(sourceData, templateMetadata, sampleRowCount);
+      if (preAnalysisContext) {
+        prompt = preAnalysisContext + '\n\n' + prompt;
+      }
 
       return withRetry(async () => {
         const { object } = await generateObject({
