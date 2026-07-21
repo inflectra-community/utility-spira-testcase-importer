@@ -46,7 +46,17 @@ export function analyzeSpreadsheet(
     structureClaimedColumns.add(structure.stepStructure.stepExpectedResultColumn);
   }
   if (structure.folderStructure.detected && structure.folderStructure.column) {
-    structureClaimedColumns.add(structure.folderStructure.column);
+    // Don't claim folder column if a custom property with the same name exists
+    // (custom property exact match is a stronger signal than structural folder detection)
+    const folderCol = structure.folderStructure.column;
+    const cpNames = metadata.customProperties.map(cp => cp.name?.toLowerCase()).filter(Boolean);
+    if (!cpNames.includes(folderCol.toLowerCase())) {
+      structureClaimedColumns.add(folderCol);
+    } else {
+      // Override: treat as custom property, not folder
+      structure.folderStructure.detected = false;
+      structure.folderStructure.column = undefined;
+    }
   }
 
   // Phase 2: Column matching (only unclaimed columns)
