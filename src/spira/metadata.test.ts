@@ -123,6 +123,7 @@ function createFullMockClient(): SpiraApiClient {
     createTestFolder: vi.fn(),
     createTestCase: vi.fn(),
     addTestSteps: vi.fn(),
+    uploadDocument: vi.fn(),
   };
 }
 
@@ -278,6 +279,7 @@ describe('fetchAllMetadata', () => {
       createTestFolder: vi.fn(),
       createTestCase: vi.fn(),
       addTestSteps: vi.fn(),
+      uploadDocument: vi.fn(),
     };
     const logger = createMockLogger();
     const config = createMockConfig();

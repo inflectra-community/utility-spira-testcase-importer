@@ -25,6 +25,7 @@ function createMockClient(overrides?: Partial<SpiraApiClient>): SpiraApiClient {
     createTestFolder: vi.fn().mockResolvedValue({ testCaseFolderId: 100, name: 'folder', indentLevel: '0' }),
     createTestCase: vi.fn().mockResolvedValue({ TestCaseId: 1 }),
     addTestSteps: vi.fn().mockResolvedValue(undefined),
+    uploadDocument: vi.fn().mockResolvedValue({ DocumentId: 1 }),
     ...overrides,
   };
 }

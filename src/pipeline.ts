@@ -32,6 +32,7 @@ import { createValidationEngine } from './validator/index.js';
 import { generateValidationReport } from './report/index.js';
 import { createImportEngine } from './importer/index.js';
 import { analyzeSpreadsheet, type PreAnalysisResult } from './heuristics/index.js';
+import { extractAttachmentInfo, uploadAttachments, type PendingAttachment } from './importer/attachment-handler.js';
 
 /**
  * Pipeline options including the optional strategy.
@@ -504,7 +505,12 @@ export async function runPipeline(
 
   process.stdout.write('\n\n');
 
-  // Phase 9: Summary & Persist Log
+  // Phase 9: Attachment upload (if any attachment columns were detected)
+  // TODO: Wire attachment upload into the import loop once row→testCaseId mapping is tracked
+  // For now, attachments are skipped (heuristic marks attachment columns as __Ignore__)
+  // Future: import engine returns created IDs, then uploadAttachments() runs as post-processing
+
+  // Phase 10: Summary & Persist Log
   displayImportSummary(importResult, config.dryRun);
   await logger.persist(config.logFile);
   logger.info(`Log persisted to: ${config.logFile ?? 'import-log-<timestamp>.json'}`);
