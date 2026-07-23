@@ -17,6 +17,7 @@
  */
 
 import { select, input } from '@inquirer/prompts';
+import * as path from 'node:path';
 import type { ImporterConfig } from './types/config.js';
 import type { Logger } from './logger/index.js';
 import type { TemplateMetadata } from './types/spira.js';
@@ -505,10 +506,54 @@ export async function runPipeline(
 
   process.stdout.write('\n\n');
 
-  // Phase 9: Attachment upload (if any attachment columns were detected)
-  // TODO: Wire attachment upload into the import loop once row→testCaseId mapping is tracked
-  // For now, attachments are skipped (heuristic marks attachment columns as __Ignore__)
-  // Future: import engine returns created IDs, then uploadAttachments() runs as post-processing
+  // Phase 9: Attachment upload
+  if (!config.dryRun && importResult.createdTestCases.size > 0) {
+    // Find attachment columns (those auto-ignored by heuristics)
+    const attachmentColumns = preAnalysis.resolvedMappings
+      .filter(m => m.targetField === '__Ignore__' && m.matchReason === 'auto-ignore')
+      .map(m => m.sourceColumn);
+
+    if (attachmentColumns.length > 0) {
+      const pendingAttachments: PendingAttachment[] = [];
+      const sourceDir = path.dirname(path.resolve(config.sourceFile));
+
+      // Scan source rows for attachment values, grouped by test case
+      for (const tc of transformResult.testCases) {
+        const testCaseId = importResult.createdTestCases.get(tc.sourceRowIndex);
+        if (!testCaseId) continue;
+
+        // Find the source row for this test case
+        const sourceRow = selectedSheet.rows[tc.sourceRowIndex];
+        if (!sourceRow) continue;
+
+        for (const col of attachmentColumns) {
+          const cellValue = sourceRow[col];
+          const info = extractAttachmentInfo(cellValue);
+          if (info) {
+            pendingAttachments.push({
+              testCaseId,
+              sourceRowIndex: tc.sourceRowIndex,
+              filename: info.filename,
+              filePath: info.filePath,
+            });
+          }
+        }
+      }
+
+      if (pendingAttachments.length > 0) {
+        logger.info(`Phase 9: Uploading ${pendingAttachments.length} attachment(s)...`);
+        const attachResult = await uploadAttachments(pendingAttachments, {
+          client: spiraClient,
+          logger,
+          projectId: config.spira.projectId,
+          baseDir: sourceDir,
+        });
+        if (attachResult.successCount > 0 || attachResult.failureCount > 0) {
+          process.stdout.write(`  Attachments: ${attachResult.successCount} uploaded, ${attachResult.skippedCount} skipped, ${attachResult.failureCount} failed\n`);
+        }
+      }
+    }
+  }
 
   // Phase 10: Summary & Persist Log
   displayImportSummary(importResult, config.dryRun);

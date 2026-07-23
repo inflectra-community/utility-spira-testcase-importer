@@ -10,6 +10,8 @@ export interface ImportResult {
   failures: ImportFailure[];
   createdFolders: string[];
   duration: number; // milliseconds
+  /** Maps source row index to created Spira test case ID (for post-import operations like attachments) */
+  createdTestCases: Map<number, number>;
 }
 
 export interface ImportFailure {
