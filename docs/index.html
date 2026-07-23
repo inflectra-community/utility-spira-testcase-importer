@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spira Test Case Importer</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Josefin+Sans:wght@300;400;600;700&family=Nunito:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --teal: #073640;
+      --yolk: #FDCB26;
+      --orange: #F1A42B;
+      --deep-orange: #F08231;
+      --blue-medium: #274C66;
+      --blue-dark: #0E1F30;
+      --white: #FFFFFF;
+    }
+
+    .reveal {
+      font-family: 'Nunito', sans-serif;
+      font-size: 28px;
+      color: var(--white);
+    }
+
+    .reveal h1, .reveal h2, .reveal h3 {
+      font-family: 'Josefin Sans', sans-serif;
+      color: var(--yolk);
+      text-transform: none;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    .reveal h1 { font-size: 2.2em; }
+    .reveal h2 { font-size: 1.6em; margin-bottom: 0.4em; }
+
+    .reveal .slides section {
+      text-align: left;
+      padding: 30px 50px;
+      height: 100%;
+      box-sizing: border-box;
+    }
+
+    .reveal .slides section.center {
+      text-align: center;
+    }
+
+    .reveal ul { list-style: none; padding: 0; margin: 0; }
+
+    .reveal ul li {
+      margin: 0.4em 0;
+      padding-left: 1.2em;
+      position: relative;
+      font-size: 0.85em;
+    }
+
+    .reveal ul li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0.5em;
+      width: 7px;
+      height: 7px;
+      background: var(--yolk);
+      border-radius: 50%;
+    }
+
+    .reveal .subtitle {
+      color: var(--orange);
+      font-size: 0.65em;
+      font-weight: 300;
+    }
+
+    .reveal .highlight { color: var(--yolk); font-weight: 600; }
+    .reveal .dim { color: #8E8E90; font-size: 0.75em; }
+
+    .slide-icon {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      width: 36px;
+      height: auto;
+      opacity: 0.6;
+    }
+
+    .pipeline {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 20px;
+    }
+
+    .pipeline-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pipeline-step {
+      background: var(--blue-dark);
+      border: 2px solid var(--blue-medium);
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 0.55em;
+      flex: 1;
+      text-align: center;
+    }
+
+    .pipeline-step.heuristic { border-color: #06D6A0; background: rgba(6, 214, 160, 0.1); }
+    .pipeline-step.llm { border-color: var(--orange); background: rgba(241, 164, 43, 0.1); }
+    .pipeline-step.human { border-color: var(--yolk); background: rgba(253, 203, 38, 0.1); }
+
+    .pipeline-arrow { color: var(--yolk); font-size: 1em; flex-shrink: 0; }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .stat-card {
+      background: var(--blue-dark);
+      border-left: 3px solid var(--yolk);
+      padding: 10px 14px;
+      border-radius: 4px;
+    }
+
+    .stat-card .number {
+      font-size: 1.5em;
+      font-weight: 700;
+      color: var(--yolk);
+      font-family: 'Josefin Sans', sans-serif;
+    }
+
+    .stat-card .label { font-size: 0.6em; color: #8E8E90; margin-top: 2px; }
+
+    .next-steps {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .next-step-item {
+      background: var(--blue-dark);
+      border-radius: 6px;
+      padding: 12px;
+      border-top: 3px solid var(--orange);
+    }
+
+    .next-step-item h4 {
+      color: var(--yolk);
+      font-family: 'Josefin Sans', sans-serif;
+      margin: 0 0 6px 0;
+      font-size: 0.7em;
+    }
+
+    .next-step-item p { margin: 0; font-size: 0.58em; color: #ccc; }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- SLIDE 1: Title -->
+      <section class="center" data-background="radial-gradient(ellipse at center top, #274C66 0%, #0E1F30 40%, #073640 100%)">
+        <img src="https://www.inflectra.com/Images/Media-Kit/inflectra-logo-transparent.png" alt="Inflectra" style="width: 280px; margin-bottom: 30px;">
+        <h1>Spira Test Case Importer</h1>
+        <p class="subtitle">Intelligent Data Migration powered by Heuristics + LLM</p>
+        <p class="dim" style="margin-top: 3em;">Quality at its Core</p>
+      </section>
+
+      <!-- SLIDE 2: The Problem -->
+      <section data-background="#073640">
+        <img src="https://www.inflectra.com/Images/Media-Kit/inflectra-icon-transparent.png" alt="" class="slide-icon">
+        <h2>The Problem</h2>
+        <p style="font-size: 0.75em; color: #ccc;">Migrating test cases from external tools into Spira is painful:</p>
+        <ul>
+          <li>Every customer has a <span class="highlight">different spreadsheet format</span></li>
+          <li>Column names and values don't match Spira's data model</li>
+          <li>Test steps are buried in rows or cells &mdash; need restructuring</li>
+          <li>Custom properties and list values vary per template</li>
+          <li>Excel Add-In requires exact formatting &mdash; <span class="highlight">manual Power Query</span></li>
+        </ul>
+        <p style="margin-top: 1em; font-size: 0.65em; color: #8E8E90;">
+          Result: hours of manual wrangling per customer. Error-prone. Unscalable.
+        </p>
+      </section>
+
+      <!-- SLIDE 3: The Solution -->
+      <section data-background="#073640">
+        <img src="https://www.inflectra.com/Images/Media-Kit/inflectra-icon-transparent.png" alt="" class="slide-icon">
+        <h2>The Solution</h2>
+        <p style="font-size: 0.75em; color: #ccc;">Heuristic-first, LLM-assisted importer:</p>
+        <ul>
+          <li><span class="highlight">Heuristics</span> resolve 80%+ of mappings (zero cost, instant)</li>
+          <li><span class="highlight">LLM</span> handles only genuinely ambiguous columns</li>
+          <li><span class="highlight">Human-in-the-loop</span> approval before data touches Spira</li>
+          <li>Detects test step structure automatically</li>
+          <li>Resolves values to Spira IDs (priorities, statuses, custom lists)</li>
+        </ul>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="number">80%+</div>
+            <div class="label">Columns resolved without LLM</div>
+          </div>
+          <div class="stat-card">
+            <div class="number">&lt;10s</div>
+            <div class="label">Total import time</div>
+          </div>
+          <div class="stat-card">
+            <div class="number">$0.001</div>
+            <div class="label">Typical LLM cost per import</div>
+          </div>
+          <div class="stat-card">
+            <div class="number">0</div>
+            <div class="label">Manual data transforms</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SLIDE 4: The Pipeline -->
+      <section data-background="linear-gradient(135deg, #0E1F30 0%, #073640 100%)">
+        <img src="https://www.inflectra.com/Images/Media-Kit/inflectra-icon-transparent.png" alt="" class="slide-icon">
+        <h2>The Pipeline</h2>
+        <div class="pipeline">
+          <div class="pipeline-row">
+            <div class="pipeline-step">1. Authenticate</div>
+            <div class="pipeline-arrow">&rarr;</div>
+            <div class="pipeline-step">2. Fetch Metadata</div>
+            <div class="pipeline-arrow">&rarr;</div>
+            <div class="pipeline-step">3. Parse Excel</div>
+          </div>
+          <svg width="100%" height="40" viewBox="0 0 600 40" preserveAspectRatio="none" style="display:block;">
+            <defs><marker id="ah1" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto" markerUnits="strokeWidth"><polygon points="0 0, 6 2, 0 4" fill="#FDCB26"/></marker></defs>
+            <path d="M 500 0 C 500 15, 200 10, 100 25 L 100 38" stroke="#FDCB26" stroke-width="2" fill="none" marker-end="url(#ah1)"/>
+          </svg>
+          <div class="pipeline-row">
+            <div class="pipeline-step heuristic">4. Heuristic Analysis</div>
+            <div class="pipeline-arrow">&rarr;</div>
+            <div class="pipeline-step llm">5. LLM (reduced scope)</div>
+            <div class="pipeline-arrow">&rarr;</div>
+            <div class="pipeline-step human">6. Human Review</div>
+          </div>
+          <svg width="100%" height="40" viewBox="0 0 600 40" preserveAspectRatio="none" style="display:block;">
+            <defs><marker id="ah2" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto" markerUnits="strokeWidth"><polygon points="0 0, 6 2, 0 4" fill="#FDCB26"/></marker></defs>
+            <path d="M 500 0 C 500 15, 200 10, 100 25 L 100 38" stroke="#FDCB26" stroke-width="2" fill="none" marker-end="url(#ah2)"/>
+          </svg>
+          <div class="pipeline-row">
+            <div class="pipeline-step">7. Transform &amp; Validate</div>
+            <div class="pipeline-arrow">&rarr;</div>
+            <div class="pipeline-step human">8. Approval Report</div>
+            <div class="pipeline-arrow">&rarr;</div>
+            <div class="pipeline-step">9. Import to Spira</div>
+          </div>
+        </div>
+        <p style="margin-top: 14px; font-size: 0.55em; color: #8E8E90; text-align: center;">
+          <span style="color: #06D6A0;">&#9679;</span> Deterministic &nbsp;
+          <span style="color: #F1A42B;">&#9679;</span> LLM-assisted &nbsp;
+          <span style="color: #FDCB26;">&#9679;</span> Human decision
+        </p>
+      </section>
+
+      <!-- SLIDE 5: Next Steps -->
+      <section data-background="#073640">
+        <img src="https://www.inflectra.com/Images/Media-Kit/inflectra-icon-transparent.png" alt="" class="slide-icon">
+        <h2>Next Steps</h2>
+        <div class="next-steps">
+          <div class="next-step-item">
+            <h4>Web Interface</h4>
+            <p>Browser-based UI with drag-and-drop upload, visual mapping editor, credential management.</p>
+          </div>
+          <div class="next-step-item">
+            <h4>Requirement Strategy</h4>
+            <p>Extend beyond test cases. Add RequirementStrategy using the same extensible pipeline.</p>
+          </div>
+          <div class="next-step-item">
+            <h4>Mapping Memory (RAG)</h4>
+            <p>Store successful mappings as vectors. Retrieve similar past mappings to improve accuracy.</p>
+          </div>
+          <div class="next-step-item">
+            <h4>Quality Evaluation</h4>
+            <p>SureWire integration to score LLM mapping quality against ground truth datasets.</p>
+          </div>
+          <div class="next-step-item">
+            <h4>Token Optimisation</h4>
+            <p>Slim prompts for stronger models. Per-model budgets. Batch cost tracking.</p>
+          </div>
+          <div class="next-step-item">
+            <h4>Multi-Provider LLM</h4>
+            <p>Support model routing based on task complexity. Nova Lite for simple, Claude for complex.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- SLIDE 6: Questions -->
+      <section class="center" data-background="radial-gradient(ellipse at center top, #274C66 0%, #0E1F30 40%, #073640 100%)">
+        <img src="https://www.inflectra.com/Images/Media-Kit/inflectra-logo-transparent.png" alt="Inflectra" style="width: 320px; margin-bottom: 50px;">
+        <h2 style="color: var(--white); font-size: 2.4em;">Questions?</h2>
+        <p class="dim" style="margin-top: 2em;">Quality at its Core</p>
+      </section>
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script>
+    Reveal.initialize({
+      hash: true,
+      transition: 'slide',
+      transitionSpeed: 'default',
+      controls: true,
+      progress: true,
+      center: false,
+      width: 1280,
+      height: 720,
+    });
+  </script>
+</body>
+</html>
