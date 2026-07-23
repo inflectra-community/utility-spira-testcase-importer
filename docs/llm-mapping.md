@@ -62,6 +62,24 @@ After the LLM (or heuristics) produce a mapping:
 
 Even when the LLM produces lookup maps, heuristic-resolved values are merged in and take precedence. This means correctly-resolved values (e.g., "Medium" -> ID 3) won't be overridden by LLM hallucinations.
 
+## Value Suggestions (HITL)
+
+When heuristic value resolution fails for some values, the LLM is asked to suggest mappings. These appear in the review UI:
+
+```
+│  Value Mappings
+│  TestCaseStatusId: "New" -> Draft
+│  TestCaseTypeId: "Manual" -> SKIP (no match)
+```
+
+The user can:
+- **Accept** — use the LLM's suggestions as-is
+- **Edit value mappings** — override each suggestion with a dropdown of available targets
+- **Provide feedback** — ask the LLM to revise
+- **Abort**
+
+This handles the semantic gap between source data terminology and Spira's configured values without requiring the user to know the ID mappings upfront.
+
 ## Future: Reducing LLM Dependence
 
 As the alias tables and heuristic matchers grow, fewer columns will need LLM assistance. The goal is that well-structured spreadsheets with standard column names resolve entirely without any LLM call — the LLM becomes a fallback for exotic formats only.

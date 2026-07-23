@@ -52,6 +52,23 @@ For each custom property of type List (6) or MultiList (7), the tool fetches the
 - The LLM prompt (so it knows what valid values exist)
 - The validator (checking that mapped values are valid entries)
 
+## Custom Property Serialization
+
+The Spira API uses different value fields depending on the custom property type:
+
+| Type ID | Type Name | Value Field | Format |
+|---------|-----------|-------------|--------|
+| 1 | Text | `StringValue` | String |
+| 2 | Integer | `IntegerValue` | Number |
+| 3 | Decimal | `IntegerValue` | Number |
+| 4 | Boolean | `BooleanValue` | Boolean |
+| 5 | Date | `DateTimeValue` | ISO string |
+| 6 | List (single-select) | `IntegerValue` | List entry ID |
+| 7 | MultiList | `IntegerListValue` | Array of list entry IDs |
+| 8 | User | `IntegerValue` | User ID |
+
+**Important:** Single-select List (type 6) uses `IntegerValue`, NOT `IntegerListValue`. The API silently accepts `IntegerListValue` for type 6 but does not persist the value.
+
 ## Partial Failure Handling
 
 Each metadata category is fetched independently. If one fails (e.g., a 406 on components), the failure is logged and the pipeline continues with whatever metadata was successfully retrieved. The heuristics and LLM work with available data rather than failing entirely.

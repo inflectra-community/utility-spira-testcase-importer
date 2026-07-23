@@ -103,6 +103,20 @@ Requires >= 60% of sampled cells to match the same pattern.
 
 Detected when a column's values contain path separators (`/`, `\`, `>`, `::`) in > 30% of rows. Bonus confidence for column names matching folder-like terms ("Module", "Folder", "Category").
 
+## Value Resolution for Custom Property Lists
+
+When a column maps to a custom property of type List (6) or MultiList (7), the value resolver matches source text values against the custom list entries. For example:
+
+- Source: "VA01" → matches list entry "VA01" (ID 119) → `IntegerValue: 119`
+- Source: "Unknown" → no match → property omitted from request (Spira leaves it blank)
+
+The heuristic summary warns about unresolved values:
+```
+  Unresolved values: 2 value(s) have no match in Spira
+    ! Transaction Code: "NEWCODE", "OTHER"
+      These values will be skipped unless the Spira list is updated.
+```
+
 ## Performance
 
 The entire pre-analysis runs in < 200ms for spreadsheets up to 1000 rows. No network calls, no LLM tokens.
