@@ -1,0 +1,156 @@
+{
+  "brand": "Inflectra",
+  "product": "Spira",
+  "tagline": "Quality at its Core",
+  "vision": "Inflectra Delivers The Critical Software That Runs The World",
+
+  "voice": {
+    "attributes": [
+      "trustworthy",
+      "customer-centric",
+      "results-driven",
+      "knowledgeable",
+      "collaborative",
+      "enthusiastic"
+    ],
+    "tone": "Professional, informative, approachable. Conveys reliability, integrity, and commitment to delivering promises. Demonstrates deep understanding of customer needs."
+  },
+
+  "colors": {
+    "primary": {
+      "teal": "#073640",
+      "yolk": "#FDCB26",
+      "orange": "#F1A42B",
+      "deepOrange": "#F08231",
+      "white": "#FFFFFF"
+    },
+    "spira": {
+      "yolk": "#FDCB26",
+      "orange": "#F1A42B",
+      "deepOrange": "#F08231"
+    },
+    "blues": {
+      "light": "#207ba0",
+      "medium": "#274C66",
+      "dark": "#0E1F30"
+    },
+    "grays": {
+      "light": "#8E8E90",
+      "medium": "#505050",
+      "dark": "#313640"
+    },
+    "reds": {
+      "bright": "#E63946",
+      "medium": "#DB3A30",
+      "dark": "#660000"
+    }
+  },
+
+  "typography": {
+    "primary": {
+      "family": "Josefin Sans",
+      "weights": {
+        "light": 300,
+        "regular": 400,
+        "semiBold": 600,
+        "bold": 700
+      },
+      "usage": {
+        "headings": ["semiBold", "bold"],
+        "body": ["regular", "light"],
+        "italic": ["lightItalic", "italic"]
+      }
+    },
+    "secondary": [
+      {
+        "family": "Nunito",
+        "usage": "Used in Spira products"
+      },
+      {
+        "family": "Dosis",
+        "usage": "Subtitles and subheadings"
+      },
+      {
+        "family": "Questrial",
+        "usage": "Captions and section headers"
+      }
+    ]
+  },
+
+  "revealjs": {
+    "theme": {
+      "backgroundColor": "#073640",
+      "mainColor": "#FFFFFF",
+      "headingColor": "#FDCB26",
+      "linkColor": "#F1A42B",
+      "selectionBackgroundColor": "#F08231",
+      "headingFont": "Josefin Sans, sans-serif",
+      "mainFont": "Nunito, sans-serif",
+      "codeFont": "monospace"
+    },
+    "slide": {
+      "titleSlide": {
+        "background": "linear-gradient(135deg, #073640 0%, #0E1F30 50%, #274C66 100%)",
+        "titleColor": "#FDCB26",
+        "subtitleColor": "#FFFFFF"
+      },
+      "contentSlide": {
+        "background": "#073640",
+        "headingColor": "#FDCB26",
+        "textColor": "#FFFFFF",
+        "accentColor": "#F1A42B"
+      },
+      "highlightSlide": {
+        "background": "linear-gradient(135deg, #274C66 0%, #073640 100%)",
+        "headingColor": "#FFFFFF",
+        "accentColor": "#FDCB26"
+      }
+    },
+    "components": {
+      "codeBlock": {
+        "background": "#0E1F30",
+        "textColor": "#FFFFFF",
+        "accentColor": "#FDCB26"
+      },
+      "table": {
+        "headerBackground": "#F1A42B",
+        "headerColor": "#073640",
+        "rowEvenBackground": "#0E1F30",
+        "rowOddBackground": "#073640",
+        "borderColor": "#274C66"
+      },
+      "badge": {
+        "success": "#06D6A0",
+        "warning": "#FDCB26",
+        "error": "#E63946",
+        "info": "#207ba0"
+      },
+      "progressBar": {
+        "background": "#274C66",
+        "fill": "#FDCB26"
+      }
+    }
+  },
+
+  "imagery": {
+    "style": "Sophisticated, minimalist color gradients with dynamic interplay of shadow and line effects",
+    "stockPhoto": "Dark, sleek, professional. Advanced technology and global market themes.",
+    "avoid": ["distorting logos", "changing brand colors", "rotating logos", "overcrowding"]
+  },
+
+  "logos": {
+    "inflectra": {
+      "standard": "Yolk underline, orange icon, deep orange accents",
+      "monochrome": ["black", "white"],
+      "spacing": "At least one icon-width of clear space around the logo"
+    },
+    "products": {
+      "spiraPlan": "Enterprise Agile Program Management Platform",
+      "spiraTeam": "Application Lifecycle Management (ALM)",
+      "spiraTest": "Requirements, Test & Defect Management",
+      "spiraApps": "Flexible Personalization",
+      "rapise": "Test Automation Platform",
+      "kronoDesk": "Comprehensive Customer Support Solution"
+    }
+  }
+}

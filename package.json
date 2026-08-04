@@ -1,0 +1,50 @@
+{
+  "name": "spira-test-case-importer",
+  "version": "0.1.0",
+  "description": "LLM-assisted test case importer for Spira (codename: Ogma)",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "spira-import": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js --import features/support/setup.ts",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "spira",
+    "test-cases",
+    "importer",
+    "llm"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^4.0.134",
+    "@ai-sdk/anthropic": "^3.0.86",
+    "@ai-sdk/openai": "^3.0.74",
+    "@aws-sdk/client-bedrock-runtime": "^3.1086.0",
+    "@aws-sdk/credential-provider-ini": "^3.973.1",
+    "@aws-sdk/credential-provider-sso": "^3.973.1",
+    "@aws-sdk/credential-providers": "^3.1086.0",
+    "@inquirer/prompts": "^8.5.2",
+    "ai": "^6.0.209",
+    "commander": "^15.0.0",
+    "exceljs": "^4.4.0",
+    "inquirer": "^14.0.2",
+    "typescript": "^6.0.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "^13.0.0",
+    "@cucumber/pretty-formatter": "^4.0.0",
+    "@types/inquirer": "^9.0.10",
+    "@types/node": "^26.1.0",
+    "fast-check": "^4.8.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.23.1",
+    "vitest": "^4.1.9"
+  }
+}
