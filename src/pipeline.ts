@@ -34,6 +34,7 @@ import { generateValidationReport } from './report/index.js';
 import { createImportEngine } from './importer/index.js';
 import { analyzeSpreadsheet, type PreAnalysisResult } from './heuristics/index.js';
 import { extractAttachmentInfo, uploadAttachments, type PendingAttachment } from './importer/attachment-handler.js';
+import { extractColumnInfo, writeProvisionerFile } from './provisioner/index.js';
 
 /**
  * Pipeline options including the optional strategy.
@@ -352,11 +353,15 @@ export async function runPipeline(
     displayMappingSummary(mappingResult);
 
     const hasValueSuggestions = mappingResult.valueSuggestions && mappingResult.valueSuggestions.length > 0;
+    const hasUnresolvedColumns = preAnalysis.unresolvedColumns.length > 0;
     const choices: { name: string; value: string }[] = [
       { name: 'Accept mapping and continue', value: 'accept' },
     ];
     if (hasValueSuggestions) {
       choices.push({ name: 'Edit value mappings', value: 'editValues' });
+    }
+    if (hasUnresolvedColumns) {
+      choices.push({ name: 'Export unmatched fields for SpiraProvisioner', value: 'exportProvisioner' });
     }
     choices.push({ name: 'Provide feedback and regenerate', value: 'feedback' });
     choices.push({ name: 'Abort import', value: 'abort' });
@@ -402,6 +407,28 @@ export async function runPipeline(
       // Re-process the edited suggestions into lookup maps
       processValueSuggestions(mappingResult, metadata);
       // Re-display
+    } else if (reviewChoice === 'exportProvisioner') {
+      // Generate SpiraProvisioner JSON for unmatched columns
+      const programName = await input({
+        message: 'Program name in Spira (must already exist):',
+        default: 'Default Program',
+      });
+      const productName = await input({
+        message: 'Product name to add fields to:',
+        default: metadata.projectId ? `Project ${metadata.projectId}` : 'My Product',
+      });
+
+      const columnInfo = extractColumnInfo(selectedSheet.rows, preAnalysis.unresolvedColumns);
+      const outputPath = writeProvisionerFile(
+        { programName, productName, columns: columnInfo },
+        process.cwd(),
+      );
+
+      const GREEN = '\x1b[32m';
+      const RESET = '\x1b[0m';
+      process.stdout.write(`\n${GREEN}Provisioner config written to: ${outputPath}${RESET}\n`);
+      process.stdout.write(`Run SpiraProvisioner with this file to add the custom fields, then re-run this import.\n\n`);
+      // Don't approve — let the user review again or abort
     } else if (reviewChoice === 'feedback') {
       const feedback = await input({
         message: 'Enter your feedback for the LLM (describe what to change):',
