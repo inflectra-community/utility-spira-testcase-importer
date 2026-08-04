@@ -65,6 +65,7 @@ export interface SpiraApiClient {
   createTestFolder(folder: CreateFolderRequest): Promise<TestCaseFolder>;
   createTestCase(testCase: CreateTestCaseRequest): Promise<{ TestCaseId: number }>;
   addTestSteps(testCaseId: number, steps: CreateTestStepRequest[]): Promise<void>;
+  uploadDocument(document: Record<string, unknown>): Promise<{ DocumentId: number }>;
 }
 
 /**
@@ -375,6 +376,19 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
     };
   }
 
+  /**
+   * Uploads a document (file attachment) to the project.
+   * POST /projects/{project_id}/documents/file
+   */
+  async function uploadDocument(document: Record<string, unknown>): Promise<{ DocumentId: number }> {
+    const raw = await request<any>(
+      'POST',
+      `/projects/${config.projectId}/documents/file`,
+      document,
+    );
+    return { DocumentId: raw.DocumentId ?? raw.documentId };
+  }
+
   return {
     authenticate,
     getCustomProperties,
@@ -388,5 +402,6 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
     createTestFolder,
     createTestCase,
     addTestSteps,
+    uploadDocument,
   };
 }

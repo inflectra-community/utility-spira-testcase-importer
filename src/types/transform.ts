@@ -28,6 +28,8 @@ export interface TransformedTestCase {
   testSteps: TransformedTestStep[];
   folderPath?: string;
   tags?: string;
+  /** Raw attachment cell value (ExcelJS hyperlink object or string) — for post-import upload */
+  attachmentValue?: unknown;
 }
 
 export interface TransformationError {

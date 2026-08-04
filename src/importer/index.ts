@@ -84,6 +84,7 @@ export function createImportEngine(config: ImportEngineConfig): ImportEngine {
     const failures: ImportFailure[] = [];
     let successCount = 0;
     let failureCount = 0;
+    const createdTestCasesMap = new Map<number, number>();
 
     // Graceful shutdown state
     let shutdownRequested = false;
@@ -158,7 +159,8 @@ export function createImportEngine(config: ImportEngineConfig): ImportEngine {
         if (strategy) {
           await importSingleArtifact(testCase, folderResolver, client, customPropertyDefinitions, logger, strategy);
         } else {
-          await importSingleTestCase(testCase, folderResolver, client, customPropertyDefinitions, logger);
+          const tcId = await importSingleTestCase(testCase, folderResolver, client, customPropertyDefinitions, logger);
+          createdTestCasesMap.set(testCase.sourceRowIndex, tcId);
         }
         successCount++;
       } catch (err) {
@@ -195,6 +197,7 @@ export function createImportEngine(config: ImportEngineConfig): ImportEngine {
       failures,
       createdFolders,
       duration,
+      createdTestCases: createdTestCasesMap,
     };
 
     logger.info(`Import complete: ${successCount} succeeded, ${failureCount} failed, ${total - currentIndex} skipped (${duration}ms)`);
@@ -217,7 +220,7 @@ async function importSingleTestCase(
   client: SpiraApiClient,
   customPropertyDefinitions: CustomPropertyDefinition[],
   logger: Logger,
-): Promise<void> {
+): Promise<number> {
   // Step 1: Resolve folder path to ID
   let folderId: number | null = null;
   try {
@@ -278,6 +281,8 @@ async function importSingleTestCase(
       throw new ImportPhaseError(`Test step creation failed: ${errorMessage}`, 'teststep');
     }
   }
+
+  return testCaseId;
 }
 
 /**
