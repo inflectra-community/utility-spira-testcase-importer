@@ -151,7 +151,7 @@ export function writeProvisionerFile(
   filename?: string,
 ): string {
   const json = generateProvisionerConfig(config);
-  const outputFilename = filename ?? 'spira-provisioner-additions.json';
+  const outputFilename = filename ?? `spira-provisioner-${Date.now()}.json`;
   const outputPath = path.resolve(outputDir, outputFilename);
 
   fs.writeFileSync(outputPath, JSON.stringify(json, null, 2), 'utf-8');
