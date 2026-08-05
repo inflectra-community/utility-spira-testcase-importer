@@ -34,7 +34,7 @@ import { generateValidationReport } from './report/index.js';
 import { createImportEngine } from './importer/index.js';
 import { analyzeSpreadsheet, type PreAnalysisResult } from './heuristics/index.js';
 import { extractAttachmentInfo, uploadAttachments, type PendingAttachment } from './importer/attachment-handler.js';
-import { extractColumnInfo, writeProvisionerFile } from './provisioner/index.js';
+import { extractColumnInfo, writeProvisionerFile, findMissingListValues } from './provisioner/index.js';
 
 /**
  * Pipeline options including the optional strategy.
@@ -408,7 +408,7 @@ export async function runPipeline(
       processValueSuggestions(mappingResult, metadata);
       // Re-display
     } else if (reviewChoice === 'exportProvisioner') {
-      // Generate SpiraProvisioner JSON for unmatched columns
+      // Generate SpiraProvisioner JSON for unmatched columns + missing list values
       const programName = await input({
         message: 'Program name in Spira (must already exist):',
         default: 'Default Program',
@@ -418,16 +418,45 @@ export async function runPipeline(
         default: metadata.projectId ? `Project ${metadata.projectId}` : 'My Product',
       });
 
-      const columnInfo = extractColumnInfo(selectedSheet.rows, preAnalysis.unresolvedColumns);
+      // New columns that don't exist in Spira
+      const newColumnInfo = extractColumnInfo(selectedSheet.rows, preAnalysis.unresolvedColumns);
+
+      // Existing list properties with missing values
+      const missingValues = findMissingListValues(
+        selectedSheet.rows,
+        preAnalysis.resolvedMappings,
+        metadata.customProperties,
+        metadata.customLists,
+      );
+
       const outputPath = writeProvisionerFile(
-        { programName, productName, columns: columnInfo },
+        { programName, productName, newColumns: newColumnInfo, missingValues },
         process.cwd(),
       );
 
       const GREEN = '\x1b[32m';
+      const YELLOW = '\x1b[33m';
+      const BOLD = '\x1b[1m';
       const RESET = '\x1b[0m';
-      process.stdout.write(`\n${GREEN}Provisioner config written to: ${outputPath}${RESET}\n`);
-      process.stdout.write(`Run SpiraProvisioner with this file to add the custom fields, then re-run this import.\n\n`);
+      process.stdout.write(`\n${GREEN}${BOLD}Provisioner config written to:${RESET} ${outputPath}\n\n`);
+
+      // Summary of what it contains
+      if (newColumnInfo.length > 0) {
+        process.stdout.write(`${BOLD}New custom properties to create:${RESET}\n`);
+        for (const col of newColumnInfo) {
+          process.stdout.write(`  + ${col.columnName} (${col.uniqueValues.length} unique values)\n`);
+        }
+        process.stdout.write('\n');
+      }
+      if (missingValues.length > 0) {
+        process.stdout.write(`${BOLD}Missing list values to add:${RESET}\n`);
+        for (const mv of missingValues) {
+          process.stdout.write(`  ${YELLOW}${mv.propertyName}:${RESET} +${mv.missingValues.length} values (${mv.missingValues.slice(0, 5).join(', ')}${mv.missingValues.length > 5 ? '...' : ''})\n`);
+        }
+        process.stdout.write('\n');
+      }
+
+      process.stdout.write(`Run SpiraProvisioner with this file to update the template, then re-run this import.\n\n`);
       // Don't approve — let the user review again or abort
     } else if (reviewChoice === 'feedback') {
       const feedback = await input({

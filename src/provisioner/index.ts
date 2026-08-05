@@ -1,16 +1,18 @@
 /**
  * SpiraProvisioner Integration
  *
- * Generates a SpiraProvisioner-compatible JSON file from unmatched columns
- * detected during heuristic pre-analysis. This allows admins to extend their
- * Spira product template before re-running the import.
+ * Generates a SpiraProvisioner-compatible JSON file containing everything
+ * the Spira product template needs but doesn't have:
+ * - New custom properties (unmatched columns)
+ * - Missing list values for existing custom properties
  *
- * Schema reference (live):
- * https://raw.githubusercontent.com/inflectra-community/utility-spira-provisioner/refs/heads/main/spira-structure.schema.json
+ * Schema reference (live, via GitHub Pages):
+ * https://inflectra-community.github.io/utility-spira-provisioner/spira-structure.schema.json
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { CustomPropertyDefinition, CustomListValue } from '../types/spira.js';
 
 const PROVISIONER_SCHEMA_URL =
   'https://inflectra-community.github.io/utility-spira-provisioner/spira-structure.schema.json';
@@ -28,6 +30,18 @@ export interface UnmatchedColumnInfo {
 }
 
 /**
+ * Describes missing values for an existing list-type custom property.
+ */
+export interface MissingListValues {
+  /** The custom property name in Spira */
+  propertyName: string;
+  /** Values from the source data that are NOT in the Spira list */
+  missingValues: string[];
+  /** Values already in the Spira list (for reference) */
+  existingValues: string[];
+}
+
+/**
  * Configuration for generating the provisioner file.
  */
 export interface ProvisionerExportConfig {
@@ -35,21 +49,16 @@ export interface ProvisionerExportConfig {
   programName: string;
   /** The Spira product name */
   productName: string;
-  /** Columns to export as custom fields */
-  columns: UnmatchedColumnInfo[];
+  /** Columns to export as new custom fields */
+  newColumns: UnmatchedColumnInfo[];
+  /** Existing list properties that need additional values */
+  missingValues: MissingListValues[];
   /** Max unique values before a field is treated as text instead of list */
   listValueThreshold?: number;
 }
 
 /**
  * Determines the appropriate custom field type for a column based on its values.
- *
- * Rules:
- * - If unique values <= threshold (default 20): type = "list" with values
- * - If unique values > threshold: type = "text"
- * - If all values are "true"/"false"/"yes"/"no": type = "boolean"
- * - If all values are integers: type = "integer"
- * - If all values look like dates: type = "date"
  */
 function inferFieldType(
   column: UnmatchedColumnInfo,
@@ -88,22 +97,32 @@ function inferFieldType(
 }
 
 /**
- * Generates a SpiraProvisioner-compatible JSON structure for the given unmatched columns.
+ * Generates a SpiraProvisioner-compatible JSON structure.
+ * Includes both new custom fields AND existing fields with extended values.
  */
 export function generateProvisionerConfig(config: ProvisionerExportConfig): Record<string, unknown> {
   const threshold = config.listValueThreshold ?? 20;
 
-  const customFields = config.columns.map(column => {
+  const customFields: Record<string, unknown>[] = [];
+
+  // New custom properties
+  for (const column of config.newColumns) {
     const { type, values } = inferFieldType(column, threshold);
-    const field: Record<string, unknown> = {
-      name: column.columnName,
-      type,
-    };
-    if (values) {
-      field.values = values;
-    }
-    return field;
-  });
+    const field: Record<string, unknown> = { name: column.columnName, type };
+    if (values) field.values = values;
+    customFields.push(field);
+  }
+
+  // Existing list properties with missing values — include ALL values (existing + missing)
+  // so the provisioner creates the complete list
+  for (const mv of config.missingValues) {
+    const allValues = [...new Set([...mv.existingValues, ...mv.missingValues])].sort();
+    customFields.push({
+      name: mv.propertyName,
+      type: 'list',
+      values: allValues,
+    });
+  }
 
   return {
     $schema: PROVISIONER_SCHEMA_URL,
@@ -164,4 +183,52 @@ export function extractColumnInfo(
       rowCount,
     };
   });
+}
+
+/**
+ * Identifies missing list values for existing custom properties by comparing
+ * the source data values against the template's list entries.
+ */
+export function findMissingListValues(
+  rows: Record<string, unknown>[],
+  resolvedMappings: { sourceColumn: string; targetField: string }[],
+  customProperties: CustomPropertyDefinition[],
+  customLists: Map<number, CustomListValue[]>,
+): MissingListValues[] {
+  const results: MissingListValues[] = [];
+
+  for (const mapping of resolvedMappings) {
+    // Find the custom property this column maps to
+    const cp = customProperties.find(p => p.name === mapping.targetField);
+    if (!cp || !cp.customListId) continue; // Not a list property
+
+    // Get the list values from Spira
+    const listValues = customLists.get(cp.customListId);
+    if (!listValues) continue;
+
+    const existingNames = new Set(listValues.map(v => v.name.toLowerCase()));
+    const existingValuesList = listValues.map(v => v.name);
+
+    // Collect unique source values for this column
+    const sourceValues = new Set<string>();
+    for (const row of rows) {
+      const val = row[mapping.sourceColumn];
+      if (val != null && String(val).trim() !== '') {
+        sourceValues.add(String(val).trim());
+      }
+    }
+
+    // Find values that don't exist in the Spira list
+    const missing = [...sourceValues].filter(v => !existingNames.has(v.toLowerCase()));
+
+    if (missing.length > 0) {
+      results.push({
+        propertyName: cp.name,
+        missingValues: missing.sort(),
+        existingValues: existingValuesList,
+      });
+    }
+  }
+
+  return results;
 }
