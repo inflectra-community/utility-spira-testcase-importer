@@ -13,7 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const PROVISIONER_SCHEMA_URL =
-  'https://raw.githubusercontent.com/inflectra-community/utility-spira-provisioner/refs/heads/main/spira-structure.schema.json';
+  'https://inflectra-community.github.io/utility-spira-provisioner/spira-structure.schema.json';
 
 /**
  * Describes an unmatched column that could become a custom property.
