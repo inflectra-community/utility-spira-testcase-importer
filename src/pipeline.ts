@@ -280,7 +280,15 @@ export async function runPipeline(
     //   - The slim prompt (631 tokens) works conceptually but Nova Lite can't parse the response
     //     without full schema guidance — stronger models may handle it fine.
     logger.info(`LLM context: ${preAnalysisContextStr.length} chars (~${Math.ceil(preAnalysisContextStr.length / 4)} tokens). Full prompt appended.`);
-    mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata, 5, preAnalysisContextStr);
+    try {
+      mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata, 5, preAnalysisContextStr);
+    } catch (llmError) {
+      const msg = llmError instanceof Error ? llmError.message : String(llmError);
+      logger.error(`LLM mapping failed: ${msg}`);
+      process.stdout.write(`\n\x1b[33m[WARNING] LLM failed to generate a valid mapping. Falling back to heuristic-only results.\x1b[0m\n`);
+      process.stdout.write(`\x1b[2mYou can still export unmatched fields for SpiraProvisioner or provide feedback.\x1b[0m\n\n`);
+      mappingResult = convertPreAnalysisToMapping(preAnalysis);
+    }
     // Merge heuristic value lookups into the LLM result
     mergeLookupMaps(mappingResult, preAnalysis);
 
