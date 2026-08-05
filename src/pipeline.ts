@@ -453,8 +453,8 @@ export async function runPipeline(
         process.stdout.write(`${BOLD}New custom properties to create:${RESET}\n`);
         for (const col of newColumnInfo) {
           const { type, variabilityScore } = inferFieldTypeExported(col, 20);
-          const scoreBar = variabilityScore <= 0.3 ? `${GREEN}list${RESET}` :
-            variabilityScore <= 0.5 ? `${YELLOW}maybe-list${RESET}` : `text`;
+          const scoreBar = variabilityScore <= 0.2 ? `${GREEN}list${RESET}` :
+            variabilityScore <= 0.4 ? `${YELLOW}maybe-list${RESET}` : `text`;
           process.stdout.write(`  + ${col.columnName} → ${BOLD}${type}${RESET} (variability: ${(variabilityScore * 100).toFixed(0)}% → ${scoreBar}, ${col.uniqueValues.length} unique values)\n`);
         }
         process.stdout.write('\n');

@@ -127,7 +127,8 @@ export function inferFieldType(
   }
 
   // High variability = text (free-form, unique per row, long values)
-  if (variabilityScore > 0.5) {
+  // Cardinality > 0.4 means too many unique values relative to rows — not a dropdown
+  if (variabilityScore > 0.4) {
     return { type: 'text', variabilityScore };
   }
 
