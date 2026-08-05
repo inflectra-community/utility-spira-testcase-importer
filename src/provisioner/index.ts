@@ -58,42 +58,85 @@ export interface ProvisionerExportConfig {
 }
 
 /**
- * Determines the appropriate custom field type for a column based on its values.
+ * Calculates a variability score for a column's values.
+ * Low score (0-0.3) = likely a list/dropdown. High score (0.7-1.0) = likely free text.
+ *
+ * Factors:
+ * - Cardinality ratio (unique / total): high = text, low = list
+ * - Average value length: long values = text
+ * - Value length variance: high variance = mixed content = text
+ * - Repetition: values that repeat often = list
  */
-function inferFieldType(
+function calculateVariabilityScore(column: UnmatchedColumnInfo): number {
+  const { uniqueValues, rowCount } = column;
+
+  if (uniqueValues.length === 0 || rowCount === 0) return 0.5;
+
+  // Factor 1: Cardinality ratio (0 to 1)
+  const cardinalityRatio = uniqueValues.length / Math.max(rowCount, 1);
+
+  // Factor 2: Average length (normalised: 0 for short, 1 for long)
+  const avgLength = uniqueValues.reduce((sum, v) => sum + v.length, 0) / uniqueValues.length;
+  const lengthScore = Math.min(avgLength / 80, 1.0); // 80+ chars = max score
+
+  // Factor 3: Length variance (normalised)
+  const lengths = uniqueValues.map(v => v.length);
+  const meanLen = lengths.reduce((a, b) => a + b, 0) / lengths.length;
+  const variance = lengths.reduce((sum, l) => sum + Math.pow(l - meanLen, 2), 0) / lengths.length;
+  const stdDev = Math.sqrt(variance);
+  const varianceScore = Math.min(stdDev / 30, 1.0); // high std dev = text
+
+  // Weighted combination
+  const score = (cardinalityRatio * 0.4) + (lengthScore * 0.35) + (varianceScore * 0.25);
+
+  return Math.min(Math.max(score, 0), 1);
+}
+
+/**
+ * Determines the appropriate custom field type for a column based on its values.
+ * Uses a variability score to decide list vs text.
+ */
+export function inferFieldType(
   column: UnmatchedColumnInfo,
   threshold: number,
-): { type: string; values?: string[] } {
+): { type: string; values?: string[]; variabilityScore: number } {
   const { uniqueValues } = column;
 
   if (uniqueValues.length === 0) {
-    return { type: 'text' };
+    return { type: 'text', variabilityScore: 0.5 };
   }
+
+  const variabilityScore = calculateVariabilityScore(column);
 
   // Check for boolean
   const boolValues = new Set(uniqueValues.map(v => v.toLowerCase()));
   if (boolValues.size <= 2 && [...boolValues].every(v =>
     ['true', 'false', 'yes', 'no', '1', '0'].includes(v)
   )) {
-    return { type: 'boolean' };
+    return { type: 'boolean', variabilityScore };
   }
 
   // Check for integer
   if (uniqueValues.every(v => /^-?\d+$/.test(v.trim()))) {
-    return { type: 'integer' };
+    return { type: 'integer', variabilityScore };
   }
 
   // Check for date patterns
   if (uniqueValues.every(v => !isNaN(Date.parse(v)) && v.length > 6)) {
-    return { type: 'date' };
+    return { type: 'date', variabilityScore };
   }
 
-  // List vs text based on cardinality
+  // High variability = text (free-form, unique per row, long values)
+  if (variabilityScore > 0.5) {
+    return { type: 'text', variabilityScore };
+  }
+
+  // Low variability + within threshold = list
   if (uniqueValues.length <= threshold) {
-    return { type: 'list', values: uniqueValues.sort() };
+    return { type: 'list', values: uniqueValues.sort(), variabilityScore };
   }
 
-  return { type: 'text' };
+  return { type: 'text', variabilityScore };
 }
 
 /**
@@ -107,7 +150,7 @@ export function generateProvisionerConfig(config: ProvisionerExportConfig): Reco
 
   // New custom properties
   for (const column of config.newColumns) {
-    const { type, values } = inferFieldType(column, threshold);
+    const { type, values, variabilityScore } = inferFieldType(column, threshold);
     const field: Record<string, unknown> = { name: column.columnName, type };
     if (values) field.values = values;
     customFields.push(field);

@@ -34,7 +34,7 @@ import { generateValidationReport } from './report/index.js';
 import { createImportEngine } from './importer/index.js';
 import { analyzeSpreadsheet, type PreAnalysisResult } from './heuristics/index.js';
 import { extractAttachmentInfo, uploadAttachments, type PendingAttachment } from './importer/attachment-handler.js';
-import { extractColumnInfo, writeProvisionerFile, findMissingListValues } from './provisioner/index.js';
+import { extractColumnInfo, writeProvisionerFile, findMissingListValues, inferFieldType as inferFieldTypeExported } from './provisioner/index.js';
 
 /**
  * Pipeline options including the optional strategy.
@@ -452,7 +452,10 @@ export async function runPipeline(
       if (newColumnInfo.length > 0) {
         process.stdout.write(`${BOLD}New custom properties to create:${RESET}\n`);
         for (const col of newColumnInfo) {
-          process.stdout.write(`  + ${col.columnName} (${col.uniqueValues.length} unique values)\n`);
+          const { type, variabilityScore } = inferFieldTypeExported(col, 20);
+          const scoreBar = variabilityScore <= 0.3 ? `${GREEN}list${RESET}` :
+            variabilityScore <= 0.5 ? `${YELLOW}maybe-list${RESET}` : `text`;
+          process.stdout.write(`  + ${col.columnName} → ${BOLD}${type}${RESET} (variability: ${(variabilityScore * 100).toFixed(0)}% → ${scoreBar}, ${col.uniqueValues.length} unique values)\n`);
         }
         process.stdout.write('\n');
       }
