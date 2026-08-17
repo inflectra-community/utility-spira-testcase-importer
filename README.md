@@ -1,6 +1,6 @@
 # SpiraTestCaseImporter
 
-LLM-assisted artifact importer for Spira — uses heuristic pre-analysis and LLMs to map arbitrary Excel spreadsheets to Spira's data model.
+LLM-assisted artifact importer for Spira — uses heuristic pre-analysis and LLMs to map arbitrary Excel spreadsheets to Spira's data model. Also supports direct import from Zephyr Scale JSON bundles (no LLM needed).
 
 ## Quick Start
 
@@ -27,10 +27,12 @@ AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=AKIA...
 AWS_SECRET_ACCESS_KEY=...
 
-SOURCE_FILE=./your-spreadsheet.xlsx
+SOURCE_PATH=./your-spreadsheet.xlsx
 ```
 
 Supported LLM providers: `bedrock` (AWS), `openai`, `anthropic`.
+
+> **Note:** `SOURCE_PATH` replaces the older `SOURCE_FILE` variable. Both are accepted for backward compatibility, but `SOURCE_PATH` is preferred since the value can be a file or a directory.
 
 ### 3. Run (dry-run first)
 
@@ -46,6 +48,10 @@ node --env-file=.env dist/cli.js --sheet "Test Cases" --dry-run
 
 ### 4. What happens
 
+The tool auto-detects the source format based on what you point it at:
+
+#### Excel (.xlsx) — Heuristic + LLM Pipeline
+
 1. Authenticates against your Spira instance
 2. Fetches template metadata (priorities, statuses, types, custom properties, users, components)
 3. Parses your Excel file
@@ -56,13 +62,32 @@ node --env-file=.env dist/cli.js --sheet "Test Cases" --dry-run
 8. Shows a validation report for go/no-go approval
 9. Imports (or dry-runs) into Spira
 
+#### Zephyr Scale Bundle (directory) — Direct Structural Mapping
+
+1. Authenticates against your Spira instance
+2. Fetches template metadata
+3. Parses all `testcases/*.json` files from the bundle
+4. Resolves Zephyr field names (priority, status, component, custom properties) to Spira IDs
+5. Validates and shows a summary for approval
+6. Imports test cases, test steps, and folders
+7. Uploads inline image attachments
+
+No heuristics or LLM needed — the Zephyr JSON is already structured.
+
+```bash
+# Point at a Zephyr bundle directory
+node --env-file=.env dist/cli.js --source-file ./JBPT-C3730_Bundle_20260728-1753
+```
+
+A valid Zephyr bundle is a directory containing a `testcases/` subdirectory with `.json` files.
+
 ### 5. CLI Options
 
 All options can be set via environment variables (see above) or CLI flags:
 
 | Flag | Env Var | Description |
 |------|---------|-------------|
-| `--source-file` | `SOURCE_FILE` | Path to Excel file |
+| `--source-file` | `SOURCE_PATH` | Path to Excel file or Zephyr bundle directory |
 | `--provider` | `LLM_PROVIDER` | `openai`, `anthropic`, or `bedrock` |
 | `--model` | `LLM_MODEL` | Model name (e.g., `amazon.nova-lite-v1:0`) |
 | `--spira-url` | `SPIRA_URL` | Spira instance URL |
@@ -71,8 +96,18 @@ All options can be set via environment variables (see above) or CLI flags:
 | `--project-id` | `SPIRA_PROJECT_ID` | Target project ID |
 | `--region` | `AWS_REGION` | AWS region (Bedrock only) |
 | `--sheet` | — | Worksheet name (skips selection prompt) |
+| `--root-folder` | `ROOT_FOLDER` | Root folder path for all imported items |
 | `--dry-run` | — | Validate without importing |
 | `--artifact-type` | — | `test-case` (default), future: `requirement` |
+
+> LLM settings (`--provider`, `--model`, `--region`, `--llm-api-key`) are only required for Excel imports. Zephyr bundle imports skip the LLM entirely.
+
+## Supported Source Formats
+
+| Format | Detection | LLM Required | Example |
+|--------|-----------|--------------|---------|
+| Excel (.xlsx) | File with `.xlsx` extension | Yes | `SOURCE_PATH=./data.xlsx` |
+| Zephyr Scale Bundle | Directory containing `testcases/*.json` | No | `SOURCE_PATH=./JBPT-C3730_Bundle/` |
 
 ## Documentation
 

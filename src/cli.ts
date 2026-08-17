@@ -10,6 +10,8 @@ import { Command } from 'commander';
 import { loadConfig, ConfigValidationError, type CliArgs } from './config/index.js';
 import { createLogger } from './logger/index.js';
 import { runPipeline } from './pipeline.js';
+import { runZephyrPipeline } from './pipeline-zephyr.js';
+import { isZephyrBundle } from './parser/zephyr-bundle.js';
 import { createStrategy, getSupportedArtifactTypes } from './strategies/index.js';
 
 const program = new Command();
@@ -18,7 +20,7 @@ program
   .name('spira-import')
   .description('LLM-assisted artifact importer for Spira (test cases, requirements, and more)')
   .version('0.1.0')
-  .option('--source-file <path>', 'Path to the Excel file (env: SOURCE_FILE)')
+  .option('--source-file <path>', 'Path to Excel file or Zephyr bundle directory (env: SOURCE_PATH)')
   .option('--provider <provider>', 'LLM provider: openai, anthropic, or bedrock (env: LLM_PROVIDER)')
   .option('--model <model>', 'LLM model name (env: LLM_MODEL)')
   .option('--spira-url <url>', 'Spira instance base URL (env: SPIRA_URL)')
@@ -53,8 +55,14 @@ program
 
       const config = loadConfig(cliArgs);
 
-      const strategy = createStrategy(options.artifactType);
-      await runPipeline(config, logger, { strategy, sheetName: options.sheet });
+      // Auto-detect source format: Zephyr bundle (directory) vs Excel (file)
+      if (isZephyrBundle(config.sourceFile)) {
+        logger.info(`Detected Zephyr Scale bundle: ${config.sourceFile}`);
+        await runZephyrPipeline(config, logger);
+      } else {
+        const strategy = createStrategy(options.artifactType);
+        await runPipeline(config, logger, { strategy, sheetName: options.sheet });
+      }
     } catch (error) {
       if (error instanceof ConfigValidationError) {
         process.stderr.write(`\n❌ Configuration Error:\n${error.message}\n\n`);

@@ -43,6 +43,7 @@ export interface CliArgs {
  * - SPIRA_API_KEY → spira.apiKey
  * - LLM_API_KEY → llm.apiKey
  * - AWS_REGION → llm.region
+ * - SOURCE_PATH (fallback: SOURCE_FILE) → sourceFile
  */
 export function loadConfig(cliArgs: CliArgs): ImporterConfig {
   const spira: Record<string, unknown> = {
@@ -62,7 +63,7 @@ export function loadConfig(cliArgs: CliArgs): ImporterConfig {
   const rawConfig = {
     spira,
     llm,
-    sourceFile: cliArgs.sourceFile ?? process.env.SOURCE_FILE,
+    sourceFile: cliArgs.sourceFile ?? process.env.SOURCE_PATH ?? process.env.SOURCE_FILE,
     dryRun: cliArgs.dryRun ?? false,
     logFile: cliArgs.logFile,
     rootFolder: cliArgs.rootFolder ?? (process.env.ROOT_FOLDER || undefined),
@@ -77,15 +78,18 @@ export function loadConfig(cliArgs: CliArgs): ImporterConfig {
 
   const config = parseResult.data;
 
-  // Validate source file exists on disk
+  // Validate source path exists on disk (file or directory for Zephyr bundles)
   if (!fs.existsSync(config.sourceFile)) {
     throw new ConfigValidationError(
-      `Source file not found: "${config.sourceFile}". Please provide a valid path to an Excel file.`
+      `Source path not found: "${config.sourceFile}". Please provide a valid path to an Excel file or Zephyr bundle directory.`
     );
   }
 
-  // Validate LLM provider-specific requirements
-  validateLLMProviderConfig(config.llm);
+  // Validate LLM provider-specific requirements (only needed for Excel path, not Zephyr bundles)
+  const stat = fs.statSync(config.sourceFile);
+  if (!stat.isDirectory()) {
+    validateLLMProviderConfig(config.llm);
+  }
 
   return config;
 }
@@ -96,6 +100,20 @@ export function loadConfig(cliArgs: CliArgs): ImporterConfig {
  * - Bedrock requires a region
  */
 function validateLLMProviderConfig(llm: LLMConfig): void {
+  if (!llm.provider) {
+    throw new ConfigValidationError(
+      `LLM provider is required for Excel imports. ` +
+        `Set it via --provider or the LLM_PROVIDER environment variable.`
+    );
+  }
+
+  if (!llm.model) {
+    throw new ConfigValidationError(
+      `LLM model is required for Excel imports. ` +
+        `Set it via --model or the LLM_MODEL environment variable.`
+    );
+  }
+
   if ((llm.provider === 'openai' || llm.provider === 'anthropic') && !llm.apiKey) {
     throw new ConfigValidationError(
       `LLM API key is required for provider "${llm.provider}". ` +

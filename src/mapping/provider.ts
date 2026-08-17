@@ -25,7 +25,7 @@ export function createLLMProvider(config: LLMConfig): LanguageModel {
         throw new Error('OpenAI provider requires an API key. Provide it via --llm-api-key or LLM_API_KEY environment variable.');
       }
       const openai = createOpenAI({ apiKey: config.apiKey });
-      return openai(config.model);
+      return openai(config.model!);
     }
 
     case 'anthropic': {
@@ -33,7 +33,7 @@ export function createLLMProvider(config: LLMConfig): LanguageModel {
         throw new Error('Anthropic provider requires an API key. Provide it via --llm-api-key or LLM_API_KEY environment variable.');
       }
       const anthropic = createAnthropic({ apiKey: config.apiKey });
-      return anthropic(config.model);
+      return anthropic(config.model!);
     }
 
     case 'bedrock': {
@@ -44,12 +44,11 @@ export function createLLMProvider(config: LLMConfig): LanguageModel {
         region: config.region,
         credentialProvider: fromNodeProviderChain({ ignoreCache: false }),
       });
-      return bedrock(config.model);
+      return bedrock(config.model!);
     }
 
     default: {
-      const exhaustiveCheck: never = config.provider;
-      throw new Error(`Unsupported LLM provider: ${exhaustiveCheck}`);
+      throw new Error(`Unsupported LLM provider: ${config.provider}`);
     }
   }
 }

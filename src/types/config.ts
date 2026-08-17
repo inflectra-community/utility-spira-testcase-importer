@@ -15,8 +15,8 @@ export const SpiraConfigSchema = z.object({
 });
 
 export const LLMConfigSchema = z.object({
-  provider: z.enum(['openai', 'anthropic', 'bedrock']),
-  model: z.string().min(1, 'Model name is required'),
+  provider: z.enum(['openai', 'anthropic', 'bedrock']).optional(),
+  model: z.string().optional(),
   apiKey: z.string().optional(),
   region: z.string().optional(),
   temperature: z.number().min(0).max(2).optional(),

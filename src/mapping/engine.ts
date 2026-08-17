@@ -298,7 +298,7 @@ function buildRetryPrompt(previousResult: MappingResult, userFeedback: string): 
  */
 export function createMappingEngine(config: LLMConfig): LLMMappingEngine {
   const model: LanguageModel = createLLMProvider(config);
-  const providerName = config.provider;
+  const providerName = config.provider ?? 'unknown';
 
   return {
     async generateMapping(
