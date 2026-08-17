@@ -146,9 +146,6 @@ vite.config.ts.timestamp-*
 # SpiraProvisioner generated structure files
 spira-provisioner-*.json
 
-# Sample data (client-specific, not for source control)
-*.xlsx
-*.xls
-JBPT-*/
-attachments/
-*_output*.txt
+# Input dropzone (directory tracked, contents ignored)
+input/*
+!input/.gitkeep
