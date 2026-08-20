@@ -240,7 +240,7 @@ export async function runZephyrPipeline(
   logger.info(`Log persisted to: ${config.logFile ?? 'import-log-<timestamp>.json'}`);
 }
 
-// --- Internal: Name-to-ID resolution ---
+// --- Exported: Name-to-ID resolution ---
 
 /**
  * Fuzzy name matching for resolving source values to Spira entries.
@@ -252,7 +252,7 @@ export async function runZephyrPipeline(
  *
  * Returns the first match found, or undefined if nothing matches.
  */
-function fuzzyMatchName<T>(
+export function fuzzyMatchName<T>(
   sourceValue: string,
   candidates: T[],
   getName: (item: T) => string,
@@ -310,7 +310,7 @@ function fuzzyMatchName<T>(
  *
  * Mutates testCases in-place. Returns an array of warning messages for unresolved values.
  */
-function resolveZephyrMetadata(
+export function resolveZephyrMetadata(
   testCases: TransformedTestCase[],
   metadata: TemplateMetadata,
 ): string[] {
