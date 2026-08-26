@@ -22,6 +22,10 @@ import type {
   CreateFolderRequest,
   CreateTestCaseRequest,
   CreateTestStepRequest,
+  CreateTestSetRequest,
+  CreateTestSetFolderRequest,
+  TestSetFolder,
+  TestSetTestCaseMapping,
 } from '../types/import.js';
 
 /**
@@ -66,6 +70,12 @@ export interface SpiraApiClient {
   createTestCase(testCase: CreateTestCaseRequest): Promise<{ TestCaseId: number }>;
   addTestSteps(testCaseId: number, steps: CreateTestStepRequest[]): Promise<void>;
   uploadDocument(document: Record<string, unknown>): Promise<{ DocumentId: number }>;
+  getTestSetFolders(): Promise<TestSetFolder[]>;
+  createTestSetFolder(folder: CreateTestSetFolderRequest): Promise<TestSetFolder>;
+  createTestSet(testSet: CreateTestSetRequest): Promise<{ TestSetId: number }>;
+  addTestCaseToSet(testSetId: number, testCaseId: number): Promise<void>;
+  getTestCaseMappings(testSetId: number): Promise<TestSetTestCaseMapping[]>;
+  updateTestCaseMappings(testSetId: number, mappings: TestSetTestCaseMapping[]): Promise<void>;
 }
 
 /**
@@ -377,6 +387,100 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
   }
 
   /**
+   * Retrieves all test set folders in the project.
+   * GET /projects/{project_id}/test-set-folders
+   */
+  async function getTestSetFolders(): Promise<TestSetFolder[]> {
+    const raw = await request<any[]>(
+      'GET',
+      `/projects/${config.projectId}/test-set-folders`,
+    );
+    return (raw ?? []).map(f => ({
+      testSetFolderId: f.TestSetFolderId ?? f.testSetFolderId,
+      name: f.Name ?? f.name,
+      parentTestSetFolderId: f.ParentTestSetFolderId ?? f.parentTestSetFolderId,
+      indentLevel: f.IndentLevel ?? f.indentLevel ?? '0',
+    }));
+  }
+
+  /**
+   * Creates a new test set folder in the project.
+   * POST /projects/{project_id}/test-set-folders
+   */
+  async function createTestSetFolder(folder: CreateTestSetFolderRequest): Promise<TestSetFolder> {
+    const raw = await request<any>(
+      'POST',
+      `/projects/${config.projectId}/test-set-folders`,
+      folder,
+    );
+    return {
+      testSetFolderId: raw.TestSetFolderId ?? raw.testSetFolderId,
+      name: raw.Name ?? raw.name,
+      parentTestSetFolderId: raw.ParentTestSetFolderId ?? raw.parentTestSetFolderId,
+      indentLevel: raw.IndentLevel ?? raw.indentLevel ?? '0',
+    };
+  }
+
+  /**
+   * Creates a new test set in the project.
+   * POST /projects/{project_id}/test-sets
+   */
+  async function createTestSet(testSet: CreateTestSetRequest): Promise<{ TestSetId: number }> {
+    const raw = await request<any>(
+      'POST',
+      `/projects/${config.projectId}/test-sets`,
+      testSet,
+    );
+    return { TestSetId: raw.TestSetId ?? raw.testSetId };
+  }
+
+  /**
+   * Maps a test case into a test set.
+   * POST /projects/{project_id}/test-sets/{test_set_id}/test-case-mapping/{test_case_id}
+   *
+   * Note: Position cannot be set here — use updateTestCaseMappings() afterward for ordering.
+   * The endpoint expects an array body (may be empty).
+   */
+  async function addTestCaseToSet(testSetId: number, testCaseId: number): Promise<void> {
+    await request<unknown>(
+      'POST',
+      `/projects/${config.projectId}/test-sets/${testSetId}/test-case-mapping/${testCaseId}`,
+      [],
+    );
+  }
+
+  /**
+   * Retrieves the test case mappings for a test set.
+   * GET /projects/{project_id}/test-sets/{test_set_id}/test-case-mapping
+   */
+  async function getTestCaseMappings(testSetId: number): Promise<TestSetTestCaseMapping[]> {
+    const raw = await request<any[]>(
+      'GET',
+      `/projects/${config.projectId}/test-sets/${testSetId}/test-case-mapping`,
+    );
+    return (raw ?? []).map(m => ({
+      TestSetTestCaseId: m.TestSetTestCaseId ?? m.testSetTestCaseId,
+      TestSetId: m.TestSetId ?? m.testSetId,
+      TestCaseId: m.TestCaseId ?? m.testCaseId,
+      Position: m.Position ?? m.position,
+      OwnerId: m.OwnerId ?? m.ownerId,
+      IsSetupTeardown: m.IsSetupTeardown ?? m.isSetupTeardown,
+    }));
+  }
+
+  /**
+   * Updates test case mappings for a test set (used to set execution order via Position).
+   * PUT /projects/{project_id}/test-sets/{test_set_id}/test-case-mapping
+   */
+  async function updateTestCaseMappings(testSetId: number, mappings: TestSetTestCaseMapping[]): Promise<void> {
+    await request<unknown>(
+      'PUT',
+      `/projects/${config.projectId}/test-sets/${testSetId}/test-case-mapping`,
+      mappings,
+    );
+  }
+
+  /**
    * Uploads a document (file attachment) to the project.
    * POST /projects/{project_id}/documents/file
    */
@@ -403,5 +507,11 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
     createTestCase,
     addTestSteps,
     uploadDocument,
+    getTestSetFolders,
+    createTestSetFolder,
+    createTestSet,
+    addTestCaseToSet,
+    getTestCaseMappings,
+    updateTestCaseMappings,
   };
 }

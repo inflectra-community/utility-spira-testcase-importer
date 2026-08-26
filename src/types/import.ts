@@ -46,6 +46,42 @@ export interface CreateFolderRequest {
   ParentTestCaseFolderId?: number; // null = root
 }
 
+// --- Test Set request/response types ---
+
+export interface CreateTestSetRequest {
+  Name: string;
+  Description?: string;
+  TestSetStatusId: number; // 1-5 (1=Not Started, 2=Planned, 3=In Progress, 4=Completed, 5=Blocked)
+  TestRunTypeId: number; // 1=Manual, 2=Automated
+  TestSetFolderId?: number; // null = root
+  ReleaseId?: number;
+}
+
+export interface CreateTestSetFolderRequest {
+  Name: string;
+  ParentTestSetFolderId?: number; // null = root
+}
+
+export interface TestSetFolder {
+  testSetFolderId: number;
+  name: string;
+  parentTestSetFolderId?: number;
+  indentLevel: string;
+}
+
+/**
+ * Mapping of a test case into a test set (RemoteTestSetTestCaseMapping).
+ * Position controls execution order within the set.
+ */
+export interface TestSetTestCaseMapping {
+  TestSetTestCaseId?: number;
+  TestSetId: number;
+  TestCaseId: number;
+  Position?: number;
+  OwnerId?: number;
+  IsSetupTeardown?: boolean;
+}
+
 export interface RemoteCustomProperty {
   PropertyNumber: number;
   StringValue?: string;

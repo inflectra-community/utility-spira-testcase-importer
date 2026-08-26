@@ -68,6 +68,30 @@ interface ZephyrTestCase {
   parameters?: unknown;
 }
 
+// --- Test Cycle (Test Set) types ---
+
+interface ZephyrCycleItem {
+  testCaseKey: string;
+  id?: number;
+  status?: string;
+  assignedTo?: string;
+  executedBy?: string;
+  executionDate?: string;
+}
+
+interface ZephyrTestCycle {
+  key: string;
+  name: string;
+  status?: string;
+  folder?: string;
+  iteration?: string;
+  plannedStartDate?: string;
+  plannedEndDate?: string;
+  testCaseCount?: number;
+  createdBy?: string;
+  items?: ZephyrCycleItem[];
+}
+
 // --- Inline image map ---
 
 type AttachmentMap = Record<string, string>; // { "85154": "85154.png" }
@@ -80,6 +104,32 @@ export interface ZephyrBundleResult {
   pendingAttachments: ZephyrAttachmentRef[];
   /** Bundle metadata from MANIFEST.txt (informational) */
   manifest?: string;
+  /** Test set (from testcycle/*.json), if present */
+  testSet?: ZephyrTestSet;
+}
+
+/**
+ * A Zephyr test cycle mapped to a Spira Test Set candidate.
+ * Member ordering is preserved from the cycle's items[] array.
+ */
+export interface ZephyrTestSet {
+  /** Zephyr cycle key, e.g. "JBPT-C3730" */
+  key: string;
+  /** Cycle name → Test Set name */
+  name: string;
+  /** Folder path (e.g. "/DE/E2E/O2C/O2C_aATP") → Test Set folder */
+  folderPath?: string;
+  /** Zephyr status (informational) */
+  status?: string;
+  /** Iteration label (informational) */
+  iteration?: string;
+  plannedStartDate?: string;
+  plannedEndDate?: string;
+  /**
+   * Ordered list of member test case Zephyr keys.
+   * Position in this array = intended execution order in the Test Set.
+   */
+  memberKeys: string[];
 }
 
 export interface ZephyrAttachmentRef {
@@ -152,7 +202,41 @@ export function parseZephyrBundle(bundlePath: string): ZephyrBundleResult {
     pendingAttachments.push(...attachmentRefs);
   }
 
-  return { testCases, pendingAttachments, manifest };
+  // Read test cycle (Test Set), if present
+  const testSet = parseTestCycle(bundlePath);
+
+  return { testCases, pendingAttachments, manifest, testSet };
+}
+
+/**
+ * Parses the testcycle/*.json file (if present) into a ZephyrTestSet.
+ * Member order is taken from the cycle's items[] array.
+ */
+function parseTestCycle(bundlePath: string): ZephyrTestSet | undefined {
+  const cycleDir = path.join(bundlePath, 'testcycle');
+  if (!fs.existsSync(cycleDir)) return undefined;
+
+  const cycleFiles = fs.readdirSync(cycleDir).filter(f => f.endsWith('.json')).sort();
+  if (cycleFiles.length === 0) return undefined;
+
+  // A bundle represents a single cycle; use the first file.
+  const raw = fs.readFileSync(path.join(cycleDir, cycleFiles[0]), 'utf-8');
+  const cycle: ZephyrTestCycle = JSON.parse(raw);
+
+  const memberKeys = (cycle.items ?? [])
+    .map(item => item.testCaseKey)
+    .filter((k): k is string => !!k);
+
+  return {
+    key: cycle.key,
+    name: cycle.name,
+    folderPath: cycle.folder ?? undefined,
+    status: cycle.status,
+    iteration: cycle.iteration,
+    plannedStartDate: cycle.plannedStartDate,
+    plannedEndDate: cycle.plannedEndDate,
+    memberKeys,
+  };
 }
 
 // --- Internal mapping ---

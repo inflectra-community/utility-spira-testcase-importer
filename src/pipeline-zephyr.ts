@@ -27,6 +27,7 @@ import { createValidationEngine } from './validator/index.js';
 import { createImportEngine } from './importer/index.js';
 import { parseZephyrBundle, type ZephyrBundleResult, type ZephyrAttachmentRef } from './parser/zephyr-bundle.js';
 import { uploadAttachments, type PendingAttachment } from './importer/attachment-handler.js';
+import { importTestSet, type TestSetImportResult } from './importer/test-set-importer.js';
 
 /**
  * Runs the Zephyr bundle import pipeline.
@@ -87,6 +88,14 @@ export async function runZephyrPipeline(
     return;
   }
 
+  // Capture Zephyr key → sourceRowIndex BEFORE resolution (which deletes _zephyrMeta).
+  // Needed to link test set members to their created Spira test case IDs later.
+  const keyToRowIndex = new Map<string, number>();
+  for (const tc of bundleResult.testCases) {
+    const key = (tc as any)._zephyrMeta?.key as string | undefined;
+    if (key) keyToRowIndex.set(key, tc.sourceRowIndex);
+  }
+
   // Phase 3: Resolve Zephyr names to Spira IDs
   logger.info('Phase 3: Resolving Zephyr field values to Spira IDs...');
   const resolutionWarnings = resolveZephyrMetadata(bundleResult.testCases, metadata);
@@ -120,6 +129,9 @@ export async function runZephyrPipeline(
   process.stdout.write(`│  Test cases:        ${BOLD}${bundleResult.testCases.length}${RESET}\n`);
   process.stdout.write(`│  Total test steps:  ${BOLD}${bundleResult.testCases.reduce((sum, tc) => sum + tc.testSteps.length, 0)}${RESET}\n`);
   process.stdout.write(`│  Inline images:     ${BOLD}${bundleResult.pendingAttachments.length}${RESET}\n`);
+  if (bundleResult.testSet) {
+    process.stdout.write(`│  Test set:          ${BOLD}${bundleResult.testSet.name.slice(0, 40)}${RESET} ${DIM}(${bundleResult.testSet.memberKeys.length} members)${RESET}\n`);
+  }
   process.stdout.write(`│  Validation:        ${validationResult.isValid ? GREEN + 'PASS' : RED + validationResult.stats.errorCount + ' errors'}${RESET}\n`);
 
   if (resolutionWarnings.length > 0) {
@@ -213,6 +225,39 @@ export async function runZephyrPipeline(
     }
   }
 
+  // Phase 7.5: Create Test Set from the Zephyr cycle
+  let testSetResult: TestSetImportResult | undefined;
+  if (bundleResult.testSet) {
+    logger.info(`Phase 7.5: Creating Test Set "${bundleResult.testSet.name}"...`);
+
+    // Build Zephyr key → created Spira test case ID
+    const keyToTestCaseId = new Map<string, number>();
+    for (const [key, rowIndex] of keyToRowIndex) {
+      const testCaseId = importResult.createdTestCases.get(rowIndex);
+      if (testCaseId !== undefined) {
+        keyToTestCaseId.set(key, testCaseId);
+      }
+    }
+
+    const existingTestSetFolders = config.dryRun ? [] : await spiraClient.getTestSetFolders();
+
+    testSetResult = await importTestSet(
+      { testSet: bundleResult.testSet, keyToTestCaseId },
+      { client: spiraClient, logger, existingTestSetFolders, rootFolder: config.rootFolder },
+      { dryRun: config.dryRun },
+    );
+
+    for (const w of testSetResult.warnings) logger.warn(w);
+    if (testSetResult.error) {
+      process.stdout.write(`  ${RED}Test Set creation failed: ${testSetResult.error}${RESET}\n`);
+    } else if (!config.dryRun) {
+      process.stdout.write(`  Test Set: "${testSetResult.testSetName}" created ` +
+        `(${testSetResult.membersAdded} members` +
+        `${testSetResult.membersSkipped > 0 ? `, ${testSetResult.membersSkipped} skipped` : ''}` +
+        `${testSetResult.orderingApplied ? ', ordered' : ''})\n`);
+    }
+  }
+
   // Phase 8: Summary
   const mode = config.dryRun ? 'DRY-RUN ' : '';
   process.stdout.write(`${CYAN}${BOLD}${'='.repeat(63)}${RESET}\n`);
@@ -222,6 +267,9 @@ export async function runZephyrPipeline(
   process.stdout.write(`  Successful:       ${GREEN}${BOLD}${importResult.successCount}${RESET}\n`);
   process.stdout.write(`  Failed:           ${importResult.failureCount > 0 ? RED + BOLD : DIM}${importResult.failureCount}${RESET}\n`);
   process.stdout.write(`  Folders created:  ${importResult.createdFolders.length}\n`);
+  if (testSetResult && !testSetResult.error) {
+    process.stdout.write(`  Test set:         ${GREEN}${BOLD}${testSetResult.membersAdded}${RESET} member(s)${testSetResult.orderingApplied ? ' (ordered)' : ''}\n`);
+  }
   process.stdout.write(`  Duration:         ${(importResult.duration / 1000).toFixed(1)}s\n`);
 
   if (importResult.failures.length > 0) {
