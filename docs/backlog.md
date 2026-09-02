@@ -122,3 +122,20 @@ Store confirmed mappings as embeddings for retrieval on future imports.
 **Priority:** High (blocks accurate matching for new datasets)
 
 When a custom property "Functionality" exists AND "Sub Functionality" also exists, the substring matcher should not map "Sub Functionality" → "Functionality". Exact name match on an existing CP should take priority and block partial matches against other CPs with overlapping names.
+
+---
+
+### 9. Robot Framework Parser
+**Priority:** TBD (future development)
+
+Parse Robot Framework test suites and create matching test cases in Spira, extracting detail from the actual test case definitions (not a spreadsheet abstraction).
+
+- New parser for Robot Framework source files (`.robot`, and possibly `.resource`)
+- Extract per-test-case detail: test name, documentation, tags, keywords/steps, setup/teardown
+- Map Robot test cases → Spira test cases; keywords/steps → Spira test steps
+- Consider Robot's structure: Settings, Variables, Test Cases, Keywords sections
+- Tags → Spira tags or custom properties
+- `[Documentation]` → test case description; `[Tags]` → tags; keyword calls → test steps
+- Suite hierarchy (directories / suite files) → Spira folder structure
+- Joins the existing pipeline at the `TransformedTestCase[]` stage, like the Zephyr parser (structural mapping, no LLM needed)
+- Auto-detect: directory or file containing `.robot` suites
