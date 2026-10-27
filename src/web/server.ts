@@ -39,11 +39,13 @@ import {
   availableTargetsForField,
   DEFAULT_TEST_CASE_FIELDS,
 } from '../core/excel-mapping.js';
+import { extractColumnInfo, findMissingListValues, generateProvisionerConfig, inferFieldType } from '../provisioner/index.js';
 import type { SpiraConfig } from '../types/config.js';
 import type { TransformedTestCase } from '../types/transform.js';
 import type { ZephyrBundleResult } from '../parser/zephyr-bundle.js';
 import type { TemplateMetadata } from '../types/spira.js';
 import type { MappingResult } from '../types/mapping.js';
+import type { PreAnalysisResult } from '../heuristics/index.js';
 
 const INPUT_DIR = path.resolve(process.cwd(), 'input');
 const PUBLIC_DIR = path.resolve(import.meta.dirname, 'public');
@@ -68,6 +70,7 @@ interface ExcelMappingSession {
   sheet: SheetData;
   metadata: TemplateMetadata;
   mapping: MappingResult;
+  preAnalysis: PreAnalysisResult;
 }
 let excelMappingSession: ExcelMappingSession | null = null;
 
@@ -219,7 +222,7 @@ export function createServer() {
           sheet, metadata, s.llm, fieldDefinitions, logger,
         );
 
-        excelMappingSession = { sourcePath, sheet, metadata, mapping };
+        excelMappingSession = { sourcePath, sheet, metadata, mapping, preAnalysis };
 
         res.json({
           ok: true,
@@ -229,6 +232,7 @@ export function createServer() {
           llmError: llmError ?? null,
           resolvedColumnCount: preAnalysis.resolvedMappings.length,
           unresolvedColumnCount: preAnalysis.unresolvedColumns.length,
+          hasUnresolved: preAnalysis.unresolvedColumns.length > 0,
           mapping: {
             fieldMappings: mapping.fieldMappings,
             unmappedSourceColumns: mapping.unmappedSourceColumns,
@@ -405,6 +409,63 @@ export function createServer() {
           steps: tc.testSteps.length,
         })),
       },
+    });
+  });
+
+  // ── Excel: export a SpiraProvisioner structure file ─────────────────────────
+  // Returns the provisioner JSON plus a human-readable summary of what it adds.
+  app.post('/api/excel/provisioner', (req, res) => {
+    if (!excelMappingSession) { res.status(400).json({ ok: false, error: 'No Excel mapping in progress.' }); return; }
+    const { programName, productName } = req.body as { programName?: string; productName?: string };
+    const { sheet, metadata, preAnalysis } = excelMappingSession;
+
+    // New columns the heuristics/LLM couldn't map to anything in the template.
+    const newColumns = extractColumnInfo(sheet.rows, preAnalysis.unresolvedColumns);
+
+    // Existing list properties that are missing some of the source's values.
+    const missingValues = findMissingListValues(
+      sheet.rows,
+      preAnalysis.resolvedMappings,
+      metadata.customProperties,
+      metadata.customLists,
+    );
+
+    if (newColumns.length === 0 && missingValues.length === 0) {
+      res.json({ ok: true, empty: true, message: 'Nothing to provision — every column and value is already covered by the template.' });
+      return;
+    }
+
+    const config = generateProvisionerConfig({
+      programName: programName?.trim() || 'My Program',
+      productName: productName?.trim() || (metadata.projectId ? `Project ${metadata.projectId}` : 'My Product'),
+      newColumns,
+      missingValues,
+    });
+
+    // Build a readable summary for the UI (type inference + variability).
+    const newFieldSummary = newColumns.map(col => {
+      const { type, variabilityScore } = inferFieldType(col, 20);
+      return {
+        name: col.columnName,
+        type,
+        variability: Math.round(variabilityScore * 100),
+        uniqueValues: col.uniqueValues.length,
+      };
+    });
+    const missingValueSummary = missingValues.map(mv => ({
+      property: mv.propertyName,
+      added: mv.missingValues.length,
+      sample: mv.missingValues.slice(0, 8),
+    }));
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    res.json({
+      ok: true,
+      empty: false,
+      filename: `spira-provisioner-${stamp}.json`,
+      newFields: newFieldSummary,
+      missingValues: missingValueSummary,
+      config,
     });
   });
 

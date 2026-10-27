@@ -10,10 +10,9 @@
 ## Planned Features (Next Iterations)
 
 ### A. Web UI polish (follow-ups)
-**Priority:** Medium
+**Priority:** Low
 
-The Excel path works end-to-end; remaining niceties:
-- "Export unmatched fields for SpiraProvisioner" action in the web mapping review (the CLI has this; the web UI does not yet).
+The Excel path works end-to-end, including SpiraProvisioner structure-file export from the mapping review. Remaining niceties:
 - Editable field-mapping table (currently value mappings are editable, but field→target reassignment is only via LLM feedback).
 - Drag-and-drop upload (currently a file picker).
 

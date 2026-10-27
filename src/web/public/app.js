@@ -145,6 +145,7 @@ async function doParse(sheet) {
       llmError: r.llmError,
       resolved: r.resolvedColumnCount,
       unresolved: r.unresolvedColumnCount,
+      hasUnresolved: r.hasUnresolved,
     });
     return;
   }
@@ -214,6 +215,13 @@ function renderMapping(mapping, info) {
   $('mappingNotes').innerHTML = (mapping.notes || []).map((n) => `• ${escapeHtml(n)}`).join('<br>') +
     (mapping.unmappedSourceColumns && mapping.unmappedSourceColumns.length
       ? `<br><span style="color:var(--warn)">Unmapped: ${escapeHtml(mapping.unmappedSourceColumns.join(', '))}</span>` : '');
+
+  // Show the "export template changes" action only when there are unresolved columns.
+  const provBtn = $('provisionerBtn');
+  if (info.hasUnresolved) provBtn.classList.remove('hidden');
+  else provBtn.classList.add('hidden');
+  $('provisionerBox').classList.add('hidden');
+  $('provResult').innerHTML = '';
 }
 
 function collectValueEdits() {
@@ -244,6 +252,46 @@ $('feedbackSubmit').addEventListener('click', async () => {
   $('feedbackBox').classList.add('hidden');
   renderMapping(r.mapping, { regenerated: true });
   setStatus($('mappingStatus'), 'ok', 'Mapping regenerated from your feedback.');
+});
+
+// ── SpiraProvisioner export ──────────────────────────────────────────────────
+$('provisionerBtn').addEventListener('click', () => $('provisionerBox').classList.toggle('hidden'));
+
+$('provGenerate').addEventListener('click', async () => {
+  $('provResult').innerHTML = '<div class="status warn">Generating…</div>';
+  const r = await api.post('/api/excel/provisioner', {
+    programName: $('provProgram').value.trim(),
+    productName: $('provProduct').value.trim(),
+  });
+  if (!r.ok) { $('provResult').innerHTML = `<div class="status err">${escapeHtml(r.error || 'Failed.')}</div>`; return; }
+  if (r.empty) { $('provResult').innerHTML = `<div class="status ok">${escapeHtml(r.message)}</div>`; return; }
+
+  // Download the structure file.
+  const blob = new Blob([JSON.stringify(r.config, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = r.filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+
+  // Show what it contains.
+  let html = `<div class="status ok">Downloaded <strong>${escapeHtml(r.filename)}</strong>. Run SpiraProvisioner with it, then re-run this import.</div>`;
+  if (r.newFields.length) {
+    html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">New custom properties</h3>' +
+      '<table><thead><tr><th>Name</th><th>Type</th><th>Variability</th><th>Unique values</th></tr></thead><tbody>' +
+      r.newFields.map((f) => {
+        const badge = f.type === 'list' ? 'list' : f.type;
+        return `<tr><td>${escapeHtml(f.name)}</td><td>${badge}</td><td>${f.variability}%</td><td>${f.uniqueValues}</td></tr>`;
+      }).join('') + '</tbody></table>';
+  }
+  if (r.missingValues.length) {
+    html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">List values to add</h3>' +
+      '<table><thead><tr><th>Property</th><th>Values added</th><th>Sample</th></tr></thead><tbody>' +
+      r.missingValues.map((m) =>
+        `<tr><td>${escapeHtml(m.property)}</td><td>${m.added}</td><td>${escapeHtml(m.sample.join(', '))}</td></tr>`).join('') +
+      '</tbody></table>';
+  }
+  $('provResult').innerHTML = html;
 });
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
@@ -325,18 +373,28 @@ function runImport(dryRun) {
         d.failures.map((f) => `<tr><td>${f.sourceRowIndex}</td><td>${escapeHtml(f.testCaseName)}</td><td>${escapeHtml(f.error)}</td></tr>`).join('') +
         '</tbody></table>';
     }
-    // Post-import actions: start a new import, and (for real runs) save a report.
+    // Post-run action bar.
+    // After a DRY RUN the next step is the real import (primary, left); secondary
+    // actions sit to the right. After a REAL import there's no import left to do.
     lastResult = { source: selectedFile, sheet: selectedSheet, finishedAt: new Date().toISOString(), result: d };
-    html += '<div style="margin-top:14px;">' +
-      '<button class="primary" id="newImportBtn">Start a new import</button>' +
-      (d.dryRun ? '' : '<button class="ghost" id="saveReportBtn" style="margin-left:8px;">Download report</button>') +
-      '</div>';
+    const leftAction = d.dryRun
+      ? '<button class="primary" id="proceedImportBtn">Import to Spira</button>'
+      : '';
+    const rightActions =
+      '<button class="ghost" id="newImportBtn">Start new import</button>' +
+      (d.dryRun ? '' : '<button class="ghost" id="saveReportBtn" style="margin-left:8px;">Download report</button>');
+    html += `<div style="margin-top:14px;display:flex;align-items:center;">` +
+      `<div>${leftAction}</div>` +
+      `<div style="margin-left:auto;">${rightActions}</div>` +
+      `</div>`;
     $('resultSummary').innerHTML = html;
     logLine('✓ done');
     es.close();
     $('importBtn').disabled = false;
     $('dryRunBtn').disabled = false;
 
+    const proceedBtn = $('proceedImportBtn');
+    if (proceedBtn) proceedBtn.addEventListener('click', () => runImport(false));
     const newBtn = $('newImportBtn');
     if (newBtn) newBtn.addEventListener('click', resetImport);
     const saveBtn = $('saveReportBtn');

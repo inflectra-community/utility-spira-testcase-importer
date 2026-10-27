@@ -155,11 +155,21 @@
       <div style="margin-top:14px;">
         <button class="primary" id="acceptMappingBtn">Accept mapping</button>
         <button class="ghost" id="feedbackBtn" style="margin-left:8px;">Adjust with feedback…</button>
+        <button class="ghost hidden" id="provisionerBtn" style="margin-left:8px;">Export template changes…</button>
       </div>
       <div id="feedbackBox" class="hidden" style="margin-top:12px;">
         <label>Describe what to change (sent to the LLM)</label>
         <input id="feedbackText" placeholder='e.g. "Map the Area column to Component, ignore the Notes column"' />
         <button class="ghost" id="feedbackSubmit" style="margin-top:8px;">Regenerate mapping</button>
+      </div>
+      <div id="provisionerBox" class="hidden" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px;">
+        <p class="muted">Some columns or values aren't in your Spira template yet. Export a <strong>SpiraProvisioner</strong> structure file to add them, then re-run the import.</p>
+        <div class="row">
+          <div><label>Program name</label><input id="provProgram" placeholder="My Program" /></div>
+          <div><label>Product name</label><input id="provProduct" placeholder="My Product" /></div>
+        </div>
+        <button class="primary" id="provGenerate" style="margin-top:10px;">Generate &amp; download</button>
+        <div id="provResult"></div>
       </div>
     </div>
 
