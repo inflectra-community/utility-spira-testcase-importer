@@ -41,6 +41,19 @@ Issues surfaced by a customer dataset:
 
 ---
 
+### C2. Transformer: lookup misses recorded in `errors`, not `warnings`
+**Priority:** Low (tidiness)
+
+Surfaced while adding transformer unit tests: when a `lookup` transform can't
+resolve a source value, `applyLookupTransform` pushes an entry with
+`severity: 'warning'` into the `TransformationResult.errors` array rather than
+the separate `warnings` array (which stays empty). The field is correctly left
+unset, so behaviour is fine, but the placement is inconsistent. Changing it
+could affect the validation report and BDD scenarios, so it's left as-is for now
+and documented by a test (`src/transformer/transformer.test.ts`).
+
+---
+
 ### D. Mapping Memory (RAG / Vector Store)
 **Priority:** Low (future scalability)
 
