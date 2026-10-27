@@ -315,7 +315,7 @@ export async function runZephyrPipeline(
  *
  * Returns the first match found, or undefined if nothing matches.
  */
-function fuzzyMatchName<T>(
+export function fuzzyMatchName<T>(
   sourceValue: string,
   candidates: T[],
   getName: (item: T) => string,
