@@ -63,7 +63,7 @@ Implement a deterministic heuristics layer (`src/heuristics/`) that pre-analyses
 - [ ] 7. Write tests
   - [ ] 7.1 Unit tests for column matcher: exact, alias, prefix-strip, fuzzy, ambiguity
   - [ ] 7.2 Unit tests for value resolver: exact, prefix-strip, substring, Levenshtein, user matching
-  - [ ] 7.3 Unit tests for structure detector: separate-rows (Dr. Oetker pattern), inline steps (multiple formats), folder detection
+  - [ ] 7.3 Unit tests for structure detector: separate-rows (one customer's pattern), inline steps (multiple formats), folder detection
   - [ ] 7.4 Integration test: run full pre-analysis against the Sample-TestCase-Import.xlsx fixture
   - [ ] 7.5 Verify all 64 existing Cucumber scenarios still pass (backward compatibility)
 

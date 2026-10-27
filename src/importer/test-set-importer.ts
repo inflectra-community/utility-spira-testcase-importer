@@ -32,7 +32,7 @@ export interface TestSetImportConfig {
 export interface TestSetImportInput {
   testSet: ZephyrTestSet;
   /**
-   * Maps a Zephyr test case key (e.g. "JBPT-T94") to the created Spira
+   * Maps a Zephyr test case key (e.g. "PROJ-T94") to the created Spira
    * test case ID. Members not present here are skipped (with a warning).
    */
   keyToTestCaseId: Map<string, number>;

@@ -67,19 +67,24 @@ The tool auto-detects the source format based on what you point it at:
 1. Authenticates against your Spira instance
 2. Fetches template metadata
 3. Parses all `testcases/*.json` files from the bundle
-4. Resolves Zephyr field names (priority, status, component, custom properties) to Spira IDs
+4. Resolves Zephyr field names (priority, status, component, custom properties) to Spira IDs via fuzzy matching
 5. Validates and shows a summary for approval
 6. Imports test cases, test steps, and folders
 7. Uploads inline image attachments
+8. Creates a **Test Set** from the bundle's test cycle, with members in their original execution order
 
 No heuristics or LLM needed — the Zephyr JSON is already structured.
 
 ```bash
 # Point at a Zephyr bundle directory
-node --env-file=.env dist/cli.js --source-file ./JBPT-C3730_Bundle_20260728-1753
+node --env-file=.env dist/cli.js --source-file ./input/my-zephyr-bundle
 ```
 
 A valid Zephyr bundle is a directory containing a `testcases/` subdirectory with `.json` files.
+
+**Field resolution (fuzzy matching):** Zephyr values are matched to Spira template values through a cascading strategy — exact match, then "target contains source" (e.g. `High` → `2 - High`), then "source contains target" and suffix stripping (e.g. `Country Code` → `Country`). Unresolved values are reported as warnings and skipped, not failed.
+
+**Test Sets:** If the bundle includes a `testcycle/*.json` file, the importer creates a Spira Test Set named after the cycle, builds its folder hierarchy, adds the member test cases, and sets their `Position` to preserve the cycle's order. Execution history (test runs/results) is **not** imported.
 
 ### 5. CLI Options
 
@@ -104,10 +109,28 @@ All options can be set via environment variables (see above) or CLI flags:
 
 ## Supported Source Formats
 
-| Format | Detection | LLM Required | Example |
-|--------|-----------|--------------|---------|
-| Excel (.xlsx) | File with `.xlsx` extension | Yes | `SOURCE_PATH=./data.xlsx` |
-| Zephyr Scale Bundle | Directory containing `testcases/*.json` | No | `SOURCE_PATH=./JBPT-C3730_Bundle/` |
+| Format | Detection | LLM Required | Entry Points |
+|--------|-----------|--------------|--------------|
+| Excel (.xlsx / .xls) | File with a spreadsheet extension | Yes | CLI |
+| Zephyr Scale Bundle | Directory containing `testcases/*.json` | No | CLI, Web UI |
+
+## Web UI
+
+A browser-based front end is available for Zephyr bundle imports (Excel support in the UI is coming — it needs the interactive mapping-review loop).
+
+```bash
+npm run build
+npm run web        # serves http://localhost:4321
+```
+
+The UI covers:
+
+- **Settings** — Spira connection + LLM provider, saved locally to `data/settings.json` (gitignored; treat it like a `.env`). Includes a "Test Connection" button.
+- **Import** — pick or upload a Zephyr bundle, parse and validate, review the plan (test cases + the ordered Test Set), then dry-run or import with a live progress stream.
+
+The server is a thin layer over the same pipeline modules the CLI uses — it does not reimplement any import logic. Set `WEB_PORT` to change the port (default `4321`).
+
+> For a quick dev loop without a build step: `npm run web:dev` (runs the TypeScript entry directly via `tsx`).
 
 ## Documentation
 
@@ -118,54 +141,53 @@ All options can be set via environment variables (see above) or CLI flags:
 
 ## Architecture
 
-The tool operates as a multi-phase pipeline, parameterized by an **ArtifactStrategy** that makes it extensible to any Spira artifact type (test cases, requirements, incidents, etc.).
+Two entry points (CLI and Web UI) drive a set of shared, headless modules. There are two import paths that converge on the same import engine:
+
+- **Excel path** — heuristic pre-analysis, then LLM mapping, then transform/validate. Parameterized by an **ArtifactStrategy** for extensibility to other artifact types.
+- **Zephyr path** — direct structural mapping with fuzzy value resolution (no heuristics or LLM), plus Test Set creation.
 
 ```mermaid
 flowchart TD
-    CLI["CLI Entry Point<br/><code>--artifact-type test-case</code>"]
-    CLI --> Strategy["Strategy Registry<br/><code>createStrategy()</code>"]
-    Strategy --> TC["TestCaseStrategy"]
-    Strategy -.-> RQ["RequirementStrategy<br/><i>(future)</i>"]
-    Strategy -.-> IN["IncidentStrategy<br/><i>(future)</i>"]
+    CLI["CLI<br/>src/cli.ts"]
+    WEB["Web UI<br/>src/web/server.ts"]
 
-    CLI --> Pipeline["Pipeline Orchestrator"]
+    CLI --> EXCEL["Excel pipeline<br/>src/pipeline.ts"]
+    CLI --> ZEPHYR["Zephyr pipeline<br/>src/pipeline-zephyr.ts"]
+    WEB --> ZEPHYR
 
-    Pipeline --> P1["Phase 1: Authenticate"]
-    Pipeline --> P2["Phase 2: Fetch Metadata"]
-    Pipeline --> P3["Phase 3: Parse Excel"]
-    Pipeline --> P4["Phase 4: LLM Mapping"]
-    Pipeline --> P5["Phase 5: Transform & Validate"]
-    Pipeline --> P6["Phase 6: Approval Report"]
-    Pipeline --> P7["Phase 7: Import"]
-
-    subgraph "Strategy-Driven (artifact-agnostic)"
-        P2 -->|"strategy.fetchMetadata()"| SpiraClient
-        P4 -->|"buildMappingPromptFromStrategy()"| LLM["LLM Provider<br/>(OpenAI / Anthropic / Bedrock)"]
-        P5 -->|"strategy.getFieldDefinitions()"| Transformer
-        P5 -->|"strategy.getValidationRules()"| Validator
-        P7 -->|"strategy.buildCreateRequest()<br/>strategy.createArtifact()<br/>strategy.createSubItems()"| Importer
+    subgraph excelflow ["Excel path"]
+        EXCEL --> HEUR["Heuristic Pre-Analysis"]
+        HEUR --> MAP["LLM Mapping<br/>(only unresolved columns)"]
+        MAP --> XT["Transform + Validate"]
     end
 
-    subgraph "Shared Infrastructure (universal)"
+    subgraph zephyrflow ["Zephyr path"]
+        ZEPHYR --> ZP["Parse bundle<br/>testcases + testcycle"]
+        ZP --> ZR["Fuzzy resolve<br/>priority/status/CP values"]
+        ZR --> ZV["Validate"]
+    end
+
+    XT --> IMPORT["Import Engine"]
+    ZV --> IMPORT
+    IMPORT --> TS["Test Set creation<br/>(Zephyr: ordered members)"]
+
+    subgraph shared ["Shared Infrastructure"]
         SpiraClient["Spira API Client"]
-        Parser["Excel Parser<br/>(ExcelJS)"]
-        Transformer["Data Transformer"]
-        Validator["Validation Engine"]
-        Importer["Import Engine"]
+        FolderResolver["Folder / Test-Set-Folder Resolvers"]
         Logger["Logger"]
-        FolderResolver["Folder Resolver"]
+        LLM["LLM Provider<br/>(OpenAI / Anthropic / Bedrock)"]
     end
 
-    P3 --> Parser
-    P7 --> FolderResolver
-    FolderResolver --> SpiraClient
-    Importer --> SpiraClient
-    Pipeline --> Logger
+    MAP --> LLM
+    IMPORT --> FolderResolver
+    IMPORT --> SpiraClient
+    TS --> SpiraClient
 
-    style TC fill:#e8f5e9
-    style RQ fill:#fff3e0,stroke-dasharray: 5 5
-    style IN fill:#fff3e0,stroke-dasharray: 5 5
+    style zephyrflow fill:#e8f5e9
+    style excelflow fill:#eef5f6
 ```
+
+The Excel pipeline is parameterized by an **ArtifactStrategy** (see below), making it extensible to requirements, incidents, and other artifact types. The Zephyr pipeline targets test cases + test sets specifically.
 
 ### How the Strategy Plugs In
 

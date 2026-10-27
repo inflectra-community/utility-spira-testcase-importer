@@ -1,104 +1,50 @@
 # Feature Backlog
 
+## Shipped
+
+- **SpiraProvisioner integration** — exports unmatched columns + missing list values as a SpiraProvisioner JSON file (with list-vs-text inference via variability scoring). Available in the Excel mapping-review step.
+- **Zephyr Scale bundle import** — `src/parser/zephyr-bundle.ts` parses a bundle directory (`testcases/*.json`, inline attachments, `testcycle/*.json`) and maps directly to the import pipeline. Auto-detected when `SOURCE_PATH` is a directory containing `testcases/`.
+- **Zephyr Test Set creation with ordering** — the bundle's test cycle becomes a Spira Test Set: folder hierarchy built, members added, `Position` set to preserve cycle order. Execution history intentionally excluded.
+- **Web UI (Zephyr path)** — Express server (`src/web/`) + single-page front end for settings, source selection/upload, plan review, and live (SSE) import progress. Excel support in the UI is still pending (needs the mapping-review loop — see "Web UI: Excel path" below).
+
 ## Planned Features (Next Iterations)
 
-### 1. SpiraProvisioner Integration
-**Priority:** High (workflow enabler)
+### A. Web UI: Excel path
+**Priority:** High (completes the UI)
 
-Generate a SpiraProvisioner-compatible JSON file for unmatched columns, allowing admins to update their template before re-running the import.
+The web UI currently handles Zephyr bundles only. The Excel path needs the interactive mapping-review loop (heuristics → LLM → user edits → regenerate) exposed over HTTP. This is gated on the core/adapter refactor (see `docs/refactor-plan.md`): extract pipeline orchestration from I/O so both the CLI (inquirer) and Web (request/response) adapters can drive the same stages.
 
-- Analyse unmatched columns for data type (list vs text) based on value cardinality
-- Output `customFields.testCases` array conforming to SpiraProvisioner schema
-- Wire into review UI as "Export unmatched fields for provisioning" option
-- Schema reference: `spira-structure.schema.json` from utility-spira-provisioner repo
+- Mapping review as an editable table with value dropdowns
+- Validation report with row references
+- "Export unmatched fields for SpiraProvisioner" action
+- Drag-and-drop upload for `.xlsx`
 
----
+### B. Bulk Test Set Creation / Cross-Product Copy
+**Priority:** Medium (customer follow-up)
 
-### 2. Jira + Zephyr Scale JSON Import
-**Priority:** High (Oetker requirement)
+Copying test structures between Spira products, beyond the single-cycle Test Set we now create from Zephyr.
 
-Add a parser module for Zephyr Scale JSON exports (test cases + adjacent attachment files).
-
-- New parser: `src/parser/zephyr-json.ts` alongside the Excel parser
-- Input: JSON file + adjacent attachment directory
-- Same pipeline from parse onwards (heuristics, mapping, transform, validate, import)
-- Attachment handling: files are local (no hyperlink resolution needed), upload directly
-- May need a Zephyr-specific field definition set (different field names than Excel)
-- The `--source-file` CLI option accepts `.json` as well as `.xlsx`
-- Auto-detect format by extension or file content
-
----
-
-### 3. Bulk Test Set Creation / Cross-Product Copy
-**Priority:** High (Oetker requirement)
-
-Support bulk creation of Test Sets, and copying test structures between Spira products.
-
-**Needs further ideation:**
-
-Option A: Read from Spira Product #1 via API, write to Product #2
-- GET test cases, test sets, folder structure from source product
-- POST to target product (remapping IDs)
-- Handles cross-template differences (custom properties may differ)
-
+Option A: Read from Spira Product #1 via API, write to Product #2 (remap IDs, handle cross-template differences)
 Option B: Use Spira's Product Export schema as input
-- Parse the export format
-- Apply same transform/validate/import pipeline
-
 Option C: New input format (JSON/YAML) defining test sets with test case references
-- User defines which test cases go in which test sets
-- Tool creates the test sets and maps test cases by name
-
-**API considerations:**
-- Test Sets: `POST /projects/{id}/test-sets`
-- Test Set entries: `POST /projects/{id}/test-sets/{id}/test-case-mapping`
-- Need to understand test set parameters (release mapping, configurations)
 
 ---
 
-### 4. Web UI
-**Priority:** Medium (UX improvement, needed for non-technical users)
-
-Replace CLI with a browser-based interface. Functional first, pretty later.
-
-**Core views:**
-- Configuration (Spira URL, credentials, LLM provider)
-- File upload (drag-and-drop Excel/JSON)
-- Heuristic analysis dashboard (confidence bars, colour-coded)
-- Mapping review (editable table, value dropdowns)
-- Validation report (errors/warnings with row references)
-- Import progress (live status, per-record)
-- Summary (success/failure counts, log download)
-
-**Technical approach:**
-- Keep the pipeline logic as-is (it's UI-agnostic)
-- Add a thin Express/Fastify API layer
-- Replace Inquirer.js prompts with request/response cycles
-- File upload replaces `--source-file` path
-- Session-scoped credential storage (no persistent storage)
-- Consider: single-page app (React/Vue) or server-rendered (htmx?)
-
-**Brand alignment:**
-- Use Inflectra colour palette from `docs/styleguide.json`
-- Josefin Sans / Nunito typography
-- Spira teal (#073640) backgrounds, yolk (#FDCB26) accents
-
----
-
-### 5. Heuristic Improvements (from second customer test)
+### C. Heuristic Improvements (from second customer test)
 **Priority:** Medium
 
-Issues surfaced by the HASTRAA dataset:
-- "Sub Functionality" falsely matched to "Functionality" via substring (85% confidence)
-  - Fix: exact custom property match should block substring matches on a different CP name
+Issues surfaced by a customer dataset:
+- **"Sub Functionality" substring false positive (High priority):** when a custom property "Functionality" exists AND "Sub Functionality" also exists, the substring matcher maps "Sub Functionality" → "Functionality". Exact name match on an existing CP should take priority and block partial matches against other CPs with overlapping names.
 - "Module" → ComponentIds alias is too aggressive when the column likely represents a custom property
   - Fix: if a custom property named "Module" exists, prefer it over the ComponentIds alias
 - Inline step detection was correct but step columns still ended up in LLM's unresolved list
   - Fix: structure-claimed columns should not appear in unresolved list
 
+> Note: the Zephyr fuzzy matcher (`fuzzyMatchName` in `src/pipeline-zephyr.ts`) addresses a related class of issues on the Zephyr path; the fixes above apply to the Excel heuristic matcher (`src/heuristics/`).
+
 ---
 
-### 6. Mapping Memory (RAG / Vector Store)
+### D. Mapping Memory (RAG / Vector Store)
 **Priority:** Low (future scalability)
 
 Store confirmed mappings as embeddings for retrieval on future imports.
@@ -108,7 +54,7 @@ Store confirmed mappings as embeddings for retrieval on future imports.
 
 ---
 
-### 7. Token Optimisation
+### E. Token Optimisation
 **Priority:** Low
 
 - Slim prompt mode for stronger models (tested: 78% reduction works for Claude, fails for Nova Lite)
@@ -118,14 +64,7 @@ Store confirmed mappings as embeddings for retrieval on future imports.
 
 ---
 
-### 8. Fix: "Sub Functionality" substring false positive
-**Priority:** High (blocks accurate matching for new datasets)
-
-When a custom property "Functionality" exists AND "Sub Functionality" also exists, the substring matcher should not map "Sub Functionality" → "Functionality". Exact name match on an existing CP should take priority and block partial matches against other CPs with overlapping names.
-
----
-
-### 9. Robot Framework Parser
+### F. Robot Framework Parser
 **Priority:** TBD (future development)
 
 Parse Robot Framework test suites and create matching test cases in Spira, extracting detail from the actual test case definitions (not a spreadsheet abstraction).

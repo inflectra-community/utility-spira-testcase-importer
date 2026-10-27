@@ -6,7 +6,7 @@
  *
  * Bundle structure expected:
  *   <bundleDir>/
- *     testcases/         - One JSON file per test case (e.g. JBPT-T94.json)
+ *     testcases/         - One JSON file per test case (e.g. PROJ-T94.json)
  *     attachments/
  *       inline/          - Inline images referenced in step HTML
  *         _map.json      - Maps attachment IDs to local filenames
@@ -16,7 +16,7 @@
  *
  * Field mapping:
  *   name           → TestCase.Name
- *   key            → stored as description prefix "[JBPT-T94]"
+ *   key            → stored as description prefix "[PROJ-T94]"
  *   status         → (mapped to Spira status by name at import time)
  *   priority       → (mapped to Spira priority by name at import time)
  *   component      → (mapped to Spira component by name at import time)
@@ -113,7 +113,7 @@ export interface ZephyrBundleResult {
  * Member ordering is preserved from the cycle's items[] array.
  */
 export interface ZephyrTestSet {
-  /** Zephyr cycle key, e.g. "JBPT-C3730" */
+  /** Zephyr cycle key, e.g. "PROJ-C3730" */
   key: string;
   /** Cycle name → Test Set name */
   name: string;
