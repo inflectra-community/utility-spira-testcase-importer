@@ -176,6 +176,8 @@ The UI covers:
 
 The server is a thin layer over the same pipeline modules the CLI uses — the Excel mapping stage in particular is shared with the CLI via `src/core/excel-mapping.ts`, so the two never diverge. Set `WEB_PORT` to change the port (default `4321`).
 
+The server loads a local `.env` on startup (for AWS keys etc.) and is launched with Node's `--use-system-ca` so it trusts your OS certificate store — needed behind TLS-intercepting antivirus or corporate proxies (otherwise Bedrock LLM calls fail certificate verification and Excel mapping silently falls back to heuristics-only). Requires Node 22+ for `--use-system-ca`.
+
 > For a quick dev loop without a build step: `npm run web:dev` (runs the TypeScript entry directly via `tsx`).
 
 ## Documentation

@@ -139,8 +139,13 @@ async function doParse(sheet) {
   }
   if (r.format === 'excel') {
     selectedSheet = r.sheet;
-    setStatus($('parseStatus'), 'ok', `Parsed "${r.sheet}".` + (r.llmFailed ? ' (LLM unavailable — heuristic mapping only)' : ''));
-    renderMapping(r.mapping, r.summary);
+    setStatus($('parseStatus'), 'ok', `Parsed worksheet "${r.sheet}".`);
+    renderMapping(r.mapping, {
+      llmFailed: r.llmFailed,
+      llmError: r.llmError,
+      resolved: r.resolvedColumnCount,
+      unresolved: r.unresolvedColumnCount,
+    });
     return;
   }
   // Zephyr
@@ -164,10 +169,22 @@ function renderSheetChoices(sheets) {
 }
 
 // ── Excel mapping review ─────────────────────────────────────────────────────
-function renderMapping(mapping, summary) {
+function renderMapping(mapping, info) {
+  info = info || {};
   $('mappingCard').classList.remove('hidden');
   $('mappingConfidence').textContent = `${Math.round(mapping.confidence * 100)}% confidence`;
-  setStatus($('mappingStatus'), 'ok', (summary || '').trim() || 'Mapping ready for review.');
+
+  // Status reflects actual state: warn if the LLM failed, otherwise neutral/ok.
+  if (info.llmFailed) {
+    setStatus($('mappingStatus'), 'warn',
+      'The AI mapping step was unavailable, so this mapping is from the built-in rules only. ' +
+      'Review it carefully.' + (info.llmError ? `<br><span class="muted">Reason: ${escapeHtml(info.llmError)}</span>` : ''));
+  } else {
+    const bits = [];
+    if (typeof info.resolved === 'number') bits.push(`${info.resolved} columns matched automatically`);
+    if (typeof info.unresolved === 'number' && info.unresolved > 0) bits.push(`${info.unresolved} needed the AI`);
+    setStatus($('mappingStatus'), 'ok', bits.length ? bits.join(', ') + '.' : 'Mapping ready for review.');
+  }
 
   const tbody = $('mappingTable').querySelector('tbody');
   tbody.innerHTML = mapping.fieldMappings.map((fm) => {
@@ -225,7 +242,8 @@ $('feedbackSubmit').addEventListener('click', async () => {
   if (!r.ok) { setStatus($('mappingStatus'), 'err', r.error || 'Failed.'); return; }
   $('feedbackText').value = '';
   $('feedbackBox').classList.add('hidden');
-  renderMapping(r.mapping, 'Mapping regenerated.');
+  renderMapping(r.mapping, { regenerated: true });
+  setStatus($('mappingStatus'), 'ok', 'Mapping regenerated from your feedback.');
 });
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
@@ -304,23 +322,74 @@ function runImport(dryRun) {
     html += '</div>';
     if (d.failures && d.failures.length) {
       html += '<table><thead><tr><th>Row</th><th>Name</th><th>Error</th></tr></thead><tbody>' +
-        d.failures.map((f) => `<tr><td>${f.sourceRowIndex}</td><td>${f.testCaseName}</td><td>${f.error}</td></tr>`).join('') +
+        d.failures.map((f) => `<tr><td>${f.sourceRowIndex}</td><td>${escapeHtml(f.testCaseName)}</td><td>${escapeHtml(f.error)}</td></tr>`).join('') +
         '</tbody></table>';
     }
+    // Post-import actions: start a new import, and (for real runs) save a report.
+    lastResult = { source: selectedFile, sheet: selectedSheet, finishedAt: new Date().toISOString(), result: d };
+    html += '<div style="margin-top:14px;">' +
+      '<button class="primary" id="newImportBtn">Start a new import</button>' +
+      (d.dryRun ? '' : '<button class="ghost" id="saveReportBtn" style="margin-left:8px;">Download report</button>') +
+      '</div>';
     $('resultSummary').innerHTML = html;
     logLine('✓ done');
     es.close();
     $('importBtn').disabled = false;
     $('dryRunBtn').disabled = false;
+
+    const newBtn = $('newImportBtn');
+    if (newBtn) newBtn.addEventListener('click', resetImport);
+    const saveBtn = $('saveReportBtn');
+    if (saveBtn) saveBtn.addEventListener('click', downloadReport);
   });
   es.addEventListener('error', (e) => {
     let msg = 'Stream error';
     try { msg = JSON.parse(e.data).message; } catch {}
-    $('resultSummary').innerHTML = `<div class="status err">${msg}</div>`;
+    $('resultSummary').innerHTML = `<div class="status err">${escapeHtml(msg)}</div>`;
     es.close();
     $('importBtn').disabled = false;
     $('dryRunBtn').disabled = false;
   });
+}
+
+let lastResult = null;
+
+function downloadReport() {
+  if (!lastResult) return;
+  const blob = new Blob([JSON.stringify(lastResult, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const stamp = lastResult.finishedAt.replace(/[:.]/g, '-');
+  a.href = url;
+  a.download = `import-report-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Resets the Import tab to a clean state for a fresh import. */
+function resetImport() {
+  selectedFile = null;
+  selectedFormat = null;
+  selectedSheet = null;
+  lastResult = null;
+  document.querySelectorAll('.file-item').forEach((i) => i.classList.remove('selected'));
+  $('parseBtn').disabled = true;
+  $('fileInput').value = '';
+  $('parseStatus').innerHTML = '';
+  $('mappingStatus').innerHTML = '';
+  $('valueSuggestions').innerHTML = '';
+  $('mappingNotes').innerHTML = '';
+  $('feedbackText').value = '';
+  $('feedbackBox').classList.add('hidden');
+  $('resultSummary').innerHTML = '';
+  $('log').textContent = '';
+  $('progressBar').style.width = '0';
+  $('progressText').textContent = '';
+  hideFrom('sheetCard', 'mappingCard', 'planCard', 'progressCard');
+  refreshFiles();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 $('dryRunBtn').addEventListener('click', () => runImport(true));

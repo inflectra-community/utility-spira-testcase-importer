@@ -215,7 +215,7 @@ export function createServer() {
 
         // Heuristics + LLM mapping via the shared core.
         const fieldDefinitions = DEFAULT_TEST_CASE_FIELDS;
-        const { mapping, preAnalysis, llmFailed } = await generateExcelMapping(
+        const { mapping, preAnalysis, llmFailed, llmError } = await generateExcelMapping(
           sheet, metadata, s.llm, fieldDefinitions, logger,
         );
 
@@ -226,7 +226,9 @@ export function createServer() {
           format: 'excel',
           sheet: sheet.name,
           llmFailed,
-          summary: preAnalysis.summary,
+          llmError: llmError ?? null,
+          resolvedColumnCount: preAnalysis.resolvedMappings.length,
+          unresolvedColumnCount: preAnalysis.unresolvedColumns.length,
           mapping: {
             fieldMappings: mapping.fieldMappings,
             unmappedSourceColumns: mapping.unmappedSourceColumns,

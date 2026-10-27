@@ -166,6 +166,8 @@ export interface ExcelMappingResult {
   preAnalysis: PreAnalysisResult;
   usedLlm: boolean;
   llmFailed: boolean;
+  /** When llmFailed, the underlying error message (for display/diagnostics). */
+  llmError?: string;
 }
 
 /**
@@ -196,11 +198,12 @@ export async function generateExcelMapping(
 
   let mapping: MappingResult;
   let llmFailed = false;
+  let llmError: string | undefined;
   try {
     mapping = await engine.generateMapping(sheet, metadata, 5, context);
-  } catch (llmError) {
-    const msg = llmError instanceof Error ? llmError.message : String(llmError);
-    logger.error(`LLM mapping failed: ${msg}`);
+  } catch (err) {
+    llmError = err instanceof Error ? err.message : String(err);
+    logger.error(`LLM mapping failed: ${llmError}`);
     llmFailed = true;
     mapping = convertPreAnalysisToMapping(preAnalysis);
   }
@@ -208,7 +211,7 @@ export async function generateExcelMapping(
   mergeHeuristicsIntoMapping(mapping, preAnalysis, metadata);
   logger.info(`Mapping generated with confidence: ${mapping.confidence}`);
 
-  return { mapping, preAnalysis, usedLlm: !llmFailed, llmFailed };
+  return { mapping, preAnalysis, usedLlm: !llmFailed, llmFailed, llmError };
 }
 
 /**

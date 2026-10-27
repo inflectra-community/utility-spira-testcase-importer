@@ -90,5 +90,12 @@ line(`${BOLD}${CYAN}Starting the Spira Test Case Importer…${RESET}`);
 line(`When it's ready, open the address shown below in your web browser.`);
 line('');
 
-const server = spawn(process.execPath, [distEntry], { cwd: root, stdio: 'inherit' });
+// --use-system-ca (Node 22+) makes Node trust the OS certificate store, which is
+// needed behind TLS-intercepting antivirus/proxies (e.g. Avast) for the Bedrock
+// LLM calls to succeed. Guarded so older-but-supported runtimes don't choke.
+const nodeArgs = [];
+if (major >= 22) nodeArgs.push('--use-system-ca');
+nodeArgs.push(distEntry);
+
+const server = spawn(process.execPath, nodeArgs, { cwd: root, stdio: 'inherit' });
 server.on('exit', (code) => process.exit(code ?? 0));
