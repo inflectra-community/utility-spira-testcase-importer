@@ -27,6 +27,7 @@
   }
   header .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--yolk); }
   header h1 { font-size: 18px; margin: 0; font-weight: 700; }
+  header .logo { margin-left: auto; height: 32px; display: block; }
   nav { display: flex; gap: 4px; background: var(--teal-light); padding: 0 24px; }
   nav button {
     background: none; border: none; color: #cfe3e7; padding: 12px 18px;
@@ -74,7 +75,11 @@
 </style>
 </head>
 <body>
-<header><span class="dot"></span><h1>Spira Test Case Importer</h1></header>
+<header>
+  <span class="dot"></span>
+  <h1>Spira Test Case Importer</h1>
+  <img class="logo" src="images/spira-logo.svg" alt="Spira" onerror="this.style.display='none'" />
+</header>
 <nav>
   <button data-tab="settings" class="active">Settings</button>
   <button data-tab="import">Import</button>
@@ -125,16 +130,42 @@
   <section id="tab-import" class="hidden">
     <div class="card">
       <h2>1. Choose a source</h2>
-      <p class="muted">Upload a Zephyr Scale bundle (zip the bundle folder) or select one already in <code>input/</code>.</p>
+      <p class="muted">Upload a Zephyr Scale bundle (zip the folder) or an Excel file (<code>.xlsx</code>), or select one already in <code>input/</code>.</p>
       <input type="file" id="fileInput" />
       <button class="ghost" id="uploadBtn" style="margin-top:8px;">Upload</button>
       <div id="fileList" style="margin-top:14px;"></div>
-      <button class="primary" id="parseBtn" disabled>Parse &amp; Validate</button>
+      <button class="primary" id="parseBtn" disabled>Parse</button>
       <div id="parseStatus"></div>
     </div>
 
+    <!-- Excel: worksheet selection -->
+    <div class="card hidden" id="sheetCard">
+      <h2>Select a worksheet</h2>
+      <p class="muted">This workbook has multiple sheets. Pick the one with your test cases.</p>
+      <div id="sheetList"></div>
+    </div>
+
+    <!-- Excel: mapping review -->
+    <div class="card hidden" id="mappingCard">
+      <h2>2. Review the mapping <span class="pill" id="mappingConfidence"></span></h2>
+      <div id="mappingStatus"></div>
+      <table id="mappingTable"><thead><tr><th>Source Column</th><th>→ Spira Field</th><th>Type</th></tr></thead><tbody></tbody></table>
+      <div id="valueSuggestions"></div>
+      <div id="mappingNotes" class="muted"></div>
+      <div style="margin-top:14px;">
+        <button class="primary" id="acceptMappingBtn">Accept mapping</button>
+        <button class="ghost" id="feedbackBtn" style="margin-left:8px;">Adjust with feedback…</button>
+      </div>
+      <div id="feedbackBox" class="hidden" style="margin-top:12px;">
+        <label>Describe what to change (sent to the LLM)</label>
+        <input id="feedbackText" placeholder='e.g. "Map the Area column to Component, ignore the Notes column"' />
+        <button class="ghost" id="feedbackSubmit" style="margin-top:8px;">Regenerate mapping</button>
+      </div>
+    </div>
+
+    <!-- Plan (both paths) -->
     <div class="card hidden" id="planCard">
-      <h2>2. Review the plan</h2>
+      <h2>3. Review the plan</h2>
       <div id="planSummary"></div>
       <div id="planTestSet"></div>
       <table id="planTable"><thead><tr><th>Key</th><th>Name</th><th>Folder</th><th>Steps</th></tr></thead><tbody></tbody></table>
@@ -145,7 +176,7 @@
     </div>
 
     <div class="card hidden" id="progressCard">
-      <h2>3. Progress</h2>
+      <h2>4. Progress</h2>
       <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
       <div id="progressText" class="muted"></div>
       <div class="log" id="log"></div>

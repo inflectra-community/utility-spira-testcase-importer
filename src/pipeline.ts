@@ -22,7 +22,7 @@ import type { ImporterConfig } from './types/config.js';
 import type { Logger } from './logger/index.js';
 import type { TemplateMetadata } from './types/spira.js';
 import type { SheetData } from './parser/index.js';
-import type { MappingResult, FieldMapping } from './types/mapping.js';
+import type { MappingResult } from './types/mapping.js';
 import type { ArtifactStrategy } from './types/strategy.js';
 import { createSpiraClient } from './spira/client.js';
 import { fetchAllMetadata } from './spira/metadata.js';
@@ -32,7 +32,8 @@ import { createDataTransformer } from './transformer/index.js';
 import { createValidationEngine } from './validator/index.js';
 import { generateValidationReport } from './report/index.js';
 import { createImportEngine } from './importer/index.js';
-import { analyzeSpreadsheet, type PreAnalysisResult } from './heuristics/index.js';
+import type { PreAnalysisResult } from './heuristics/index.js';
+import { generateExcelMapping, processValueSuggestions, DEFAULT_TEST_CASE_FIELDS } from './core/excel-mapping.js';
 import { extractAttachmentInfo, uploadAttachments, type PendingAttachment } from './importer/attachment-handler.js';
 import { extractColumnInfo, writeProvisionerFile, findMissingListValues, inferFieldType as inferFieldTypeExported } from './provisioner/index.js';
 
@@ -139,221 +140,18 @@ export async function runPipeline(
     return;
   }
 
-  // Phase 3.5: Heuristic Pre-Analysis
+  // Phase 3.5 + 4: Heuristic Pre-Analysis + LLM Mapping (shared core).
   logger.info('Phase 3.5: Running heuristic pre-analysis...');
-  let preAnalysis;
-  try {
-    preAnalysis = analyzeSpreadsheet(selectedSheet, {
-    fieldDefinitions: strategy?.getFieldDefinitions() ?? [
-      { name: 'Name', label: 'Name', type: 'string', required: true, description: 'Test case name' },
-      { name: 'Description', label: 'Description', type: 'string', required: false, description: 'Description' },
-      { name: 'TestCasePriorityId', label: 'Priority', type: 'integer', required: false, description: 'Priority ID' },
-      { name: 'TestCaseStatusId', label: 'Status', type: 'integer', required: false, description: 'Status ID' },
-      { name: 'TestCaseTypeId', label: 'Type', type: 'integer', required: false, description: 'Type ID' },
-      { name: 'OwnerId', label: 'Owner', type: 'integer', required: false, description: 'Owner user ID' },
-      { name: 'ComponentIds', label: 'Components', type: 'integer[]', required: false, description: 'Component IDs' },
-      { name: 'Tags', label: 'Tags', type: 'string', required: false, description: 'Tags' },
-    ],
-    metadata: {
-      projectId: metadata.projectId,
-      templateId: metadata.templateId,
-      customProperties: metadata.customProperties,
-      customLists: metadata.customLists,
-      users: metadata.users,
-      components: metadata.components,
-      lookups: [
-        { fieldName: 'TestCasePriorityId', label: 'Priorities', entries: metadata.priorities.map(p => ({ id: p.priorityId, name: p.name, active: p.active })) },
-        { fieldName: 'TestCaseStatusId', label: 'Statuses', entries: metadata.statuses.map(s => ({ id: s.testCaseStatusId, name: s.name, active: s.active })) },
-        { fieldName: 'TestCaseTypeId', label: 'Types', entries: metadata.types.map(t => ({ id: t.testCaseTypeId, name: t.name, active: t.active })) },
-      ],
-      existingFolders: (metadata.existingFolders ?? []).map(f => ({ id: f.testCaseFolderId, name: f.name, parentId: f.parentTestCaseFolderId, indentLevel: f.indentLevel })),
-    },
-  });
-  } catch (heuristicError) {
-    const msg = heuristicError instanceof Error ? heuristicError.stack ?? heuristicError.message : String(heuristicError);
-    logger.warn(`Heuristic pre-analysis failed (falling back to full LLM): ${msg}`);
-    preAnalysis = { fullyResolved: false, resolvedMappings: [], valueLookups: new Map(), structure: { stepStructure: { mode: 'none' as const, confidence: 0 }, folderStructure: { detected: false, confidence: 0 } }, unresolvedColumns: selectedSheet.headers, unresolvedValues: [], summary: '  Heuristic analysis failed - using full LLM mode.' };
-  }
+  const fieldDefinitions = strategy?.getFieldDefinitions() ?? DEFAULT_TEST_CASE_FIELDS;
+  const excelMapping = await generateExcelMapping(selectedSheet, metadata, config.llm, fieldDefinitions, logger);
+  const preAnalysis = excelMapping.preAnalysis;
   process.stdout.write('\n' + preAnalysis.summary + '\n\n');
-
-  // Phase 4: LLM-Assisted Mapping (or skip if heuristics fully resolved)
-  let mappingResult: MappingResult;
-
-  if (preAnalysis.fullyResolved) {
-    logger.info('Heuristics fully resolved the mapping - skipping LLM call.');
-    mappingResult = convertPreAnalysisToMapping(preAnalysis);
-  } else {
-    logger.info(`Phase 4: Generating field mapping via LLM (${preAnalysis.unresolvedColumns.length} columns need LLM)...`);
-    const mappingEngine = createMappingEngine(config.llm);
-
-    // Build context so LLM knows what's already resolved
-    const contextLines: string[] = [
-      '# Pre-Analysis Context (already resolved — do NOT re-map these)',
-      '',
-      'The following columns have been matched deterministically:',
-    ];
-    for (const m of preAnalysis.resolvedMappings) {
-      contextLines.push(`- "${m.sourceColumn}" -> ${m.targetField} (${m.matchReason}, confidence ${(m.confidence * 100).toFixed(0)}%)`);
-    }
-    if (preAnalysis.structure.stepStructure.mode !== 'none') {
-      contextLines.push('', `Step structure detected: ${preAnalysis.structure.stepStructure.mode} mode`);
-      if (preAnalysis.structure.stepStructure.stepDescriptionColumn) {
-        contextLines.push(`- Step description column: "${preAnalysis.structure.stepStructure.stepDescriptionColumn}"`);
-      }
-      if (preAnalysis.structure.stepStructure.stepExpectedResultColumn) {
-        contextLines.push(`- Step expected result column: "${preAnalysis.structure.stepStructure.stepExpectedResultColumn}"`);
-      }
-    }
-    if (preAnalysis.structure.folderStructure.detected) {
-      contextLines.push('', `Folder column detected: "${preAnalysis.structure.folderStructure.column}" (separator: "${preAnalysis.structure.folderStructure.separator}")`);
-    }
-    contextLines.push('', '## Your task: map ONLY these remaining columns:', '');
-    for (const col of preAnalysis.unresolvedColumns) {
-      contextLines.push(`- "${col}"`);
-    }
-    contextLines.push('');
-    contextLines.push('## Available custom properties you can map to:');
-    const cpNames = metadata.customProperties.map(cp => cp.name).filter(Boolean);
-    if (cpNames.length > 0) {
-      for (const name of cpNames) {
-        contextLines.push(`- "${name}"`);
-      }
-    } else {
-      contextLines.push('- (none defined)');
-    }
-    contextLines.push('');
-    contextLines.push('## Rules:');
-    contextLines.push('- For columns already resolved above, include them in your output with the SAME targetField and transformType.');
-    contextLines.push('- For unresolved columns: map to a standard Spira field, a custom property name from the list above, or set transformType to "ignore".');
-    contextLines.push('- If a column does NOT clearly map to any known field or custom property, set transformType to "ignore". Do NOT invent target fields.');
-    contextLines.push('- Use the exact custom property name as targetField (e.g., "Source Test ID", "Transaction Code").');
-    contextLines.push('- IMPORTANT: This is an import from an external system into Spira. The source data has its own ID space (e.g., "TC-7", "REQ-123"). These are NOT Spira IDs. Columns named "Id", "ID", "Test ID", "TC_ID" etc. are historical source identifiers. If a text-type custom property exists for storing source references (e.g., "Source Test ID"), map the ID column there. Otherwise ignore it.');
-    contextLines.push('- Columns containing file paths, screenshots, or attachment references cannot be imported via the API. Mark them as "ignore".');
-
-    // Add unresolved values for LLM to suggest mappings
-    if (preAnalysis.unresolvedValues.length > 0) {
-      contextLines.push('');
-      contextLines.push('## Unresolved value mappings (suggest the best match or "SKIP"):');
-      contextLines.push('For each source value below, suggest which target value NAME it should map to.');
-      contextLines.push('Return the EXACT target NAME string from the available list (NOT the numeric ID). If no reasonable match exists, say "SKIP".');
-      contextLines.push('');
-
-      // Group by field and show available targets
-      const byField = new Map<string, string[]>();
-      for (const uv of preAnalysis.unresolvedValues) {
-        if (!byField.has(uv.field)) byField.set(uv.field, []);
-        byField.get(uv.field)!.push(uv.sourceValue);
-      }
-
-      for (const [field, values] of byField) {
-        // Get available target values for this field
-        let availableTargets: string[] = [];
-        const lookup = metadata.priorities.map(p => p.name);
-        if (field === 'TestCasePriorityId') availableTargets = metadata.priorities.map(p => p.name);
-        else if (field === 'TestCaseStatusId') availableTargets = metadata.statuses.map(s => s.name);
-        else if (field === 'TestCaseTypeId') availableTargets = metadata.types.map(t => t.name);
-        else {
-          // Custom property list
-          const cp = metadata.customProperties.find(p => p.name === field);
-          if (cp?.customListId) {
-            const listValues = metadata.customLists.get(cp.customListId);
-            if (listValues) availableTargets = listValues.map(v => v.name);
-          }
-        }
-
-        contextLines.push(`Field: ${field}`);
-        contextLines.push(`  Source values needing resolution: ${values.map(v => `"${v}"`).join(', ')}`);
-        contextLines.push(`  Available targets: ${availableTargets.map(t => `"${t}"`).join(', ')}`);
-        contextLines.push('');
-      }
-    }
-
-    const preAnalysisContextStr = contextLines.join('\n');
-
-    // TODO: Token optimisation — when unresolved columns are few (<= 3), consider a slim prompt
-    // that omits the full buildMappingPrompt and sends only the context + schema instructions.
-    // Current cost: ~3K tokens per LLM call (acceptable for single imports).
-    // Future considerations:
-    //   - Per-model token budgets (Nova Lite is cheap, Claude Sonnet is 60x more expensive)
-    //   - Batch import scenarios (multiple files) would benefit from slim prompts
-    //   - Track token usage per session for cost visibility
-    //   - The slim prompt (631 tokens) works conceptually but Nova Lite can't parse the response
-    //     without full schema guidance — stronger models may handle it fine.
-    logger.info(`LLM context: ${preAnalysisContextStr.length} chars (~${Math.ceil(preAnalysisContextStr.length / 4)} tokens). Full prompt appended.`);
-    try {
-      mappingResult = await mappingEngine.generateMapping(selectedSheet, metadata, 5, preAnalysisContextStr);
-    } catch (llmError) {
-      const msg = llmError instanceof Error ? llmError.message : String(llmError);
-      logger.error(`LLM mapping failed: ${msg}`);
-      process.stdout.write(`\n\x1b[33m[WARNING] LLM failed to generate a valid mapping. Falling back to heuristic-only results.\x1b[0m\n`);
-      process.stdout.write(`\x1b[2mYou can still export unmatched fields for SpiraProvisioner or provide feedback.\x1b[0m\n\n`);
-      mappingResult = convertPreAnalysisToMapping(preAnalysis);
-    }
-    // Merge heuristic value lookups into the LLM result
-    mergeLookupMaps(mappingResult, preAnalysis);
-
-    // Override LLM field mappings for columns the heuristics already resolved
-    // The LLM was told to preserve them but may not have — force the heuristic answers.
-    const heuristicResolved = new Map(preAnalysis.resolvedMappings.map(m => [m.sourceColumn, m]));
-    for (let i = 0; i < mappingResult.fieldMappings.length; i++) {
-      const fm = mappingResult.fieldMappings[i];
-      const heuristic = heuristicResolved.get(fm.sourceColumn);
-      if (heuristic) {
-        const lookupMap = preAnalysis.valueLookups.get(heuristic.targetField);
-        mappingResult.fieldMappings[i] = {
-          sourceColumn: fm.sourceColumn,
-          targetField: heuristic.targetField,
-          transformType: heuristic.targetField === '__Ignore__' ? 'ignore' : (lookupMap ? 'lookup' : 'direct'),
-          lookupMap,
-        };
-        heuristicResolved.delete(fm.sourceColumn); // Mark as handled
-      }
-    }
-    // Add any heuristic-resolved columns not present in LLM response
-    for (const [sourceColumn, heuristic] of heuristicResolved) {
-      if (heuristic.targetField === '__Ignore__') continue; // Ignores don't need adding
-      const lookupMap = preAnalysis.valueLookups.get(heuristic.targetField);
-      mappingResult.fieldMappings.push({
-        sourceColumn,
-        targetField: heuristic.targetField,
-        transformType: lookupMap ? 'lookup' : 'direct',
-        lookupMap,
-      });
-    }
-    // Also remove step columns from fieldMappings — they're handled by testStepMapping
-    const stepColumns = new Set<string>();
-    if (preAnalysis.structure.stepStructure.stepNumberColumn) stepColumns.add(preAnalysis.structure.stepStructure.stepNumberColumn);
-    if (preAnalysis.structure.stepStructure.stepDescriptionColumn) stepColumns.add(preAnalysis.structure.stepStructure.stepDescriptionColumn);
-    if (preAnalysis.structure.stepStructure.stepExpectedResultColumn) stepColumns.add(preAnalysis.structure.stepStructure.stepExpectedResultColumn);
-    if (stepColumns.size > 0) {
-      mappingResult.fieldMappings = mappingResult.fieldMappings.filter(fm => !stepColumns.has(fm.sourceColumn));
-    }
-    // Ensure folder column is handled via folderMapping, not fieldMappings
-    if (preAnalysis.structure.folderStructure.detected && preAnalysis.structure.folderStructure.column) {
-      const folderCol = preAnalysis.structure.folderStructure.column;
-      mappingResult.fieldMappings = mappingResult.fieldMappings.filter(fm => fm.sourceColumn !== folderCol);
-    }
-    // Ensure heuristic structure detection is preserved (LLM may not return step/folder config)
-    if (preAnalysis.structure.stepStructure.mode !== 'none') {
-      const step = preAnalysis.structure.stepStructure;
-      mappingResult.testStepMapping = {
-        mode: step.mode,
-        descriptionColumn: step.mode === 'separate-rows' ? step.stepDescriptionColumn : step.inlineColumn,
-        expectedResultColumn: step.stepExpectedResultColumn,
-        groupingColumn: step.groupingColumn,
-        stepDelimiter: step.mode === 'inline' ? (step.inlineDelimiter === 'semicolon' ? ';' : '\n') : undefined,
-      };
-    }
-    if (preAnalysis.structure.folderStructure.detected) {
-      mappingResult.folderMapping = {
-        sourceColumn: preAnalysis.structure.folderStructure.column!,
-        pathSeparator: preAnalysis.structure.folderStructure.separator ?? '/',
-      };
-    }
-    // Process LLM value suggestions — resolve suggested target names to IDs
-    processValueSuggestions(mappingResult, metadata);
-    logger.info(`LLM mapping generated with confidence: ${mappingResult.confidence}`);
+  if (excelMapping.llmFailed) {
+    process.stdout.write(`\n\x1b[33m[WARNING] LLM failed to generate a valid mapping. Falling back to heuristic-only results.\x1b[0m\n`);
+    process.stdout.write(`\x1b[2mYou can still export unmatched fields for SpiraProvisioner or provide feedback.\x1b[0m\n\n`);
   }
+  let mappingResult: MappingResult = excelMapping.mapping;
+
 
   // Phase 5: User Mapping Review
   let mappingApproved = false;
@@ -730,142 +528,4 @@ function displayImportSummary(
   }
 
   process.stdout.write(`${CYAN}${BOLD}${'='.repeat(63)}${RESET}\n`);
-}
-
-/**
- * Converts a fully-resolved PreAnalysisResult into a MappingResult
- * that the downstream transformer can consume.
- */
-function convertPreAnalysisToMapping(preAnalysis: PreAnalysisResult): MappingResult {
-  const fieldMappings: FieldMapping[] = [];
-
-  for (const match of preAnalysis.resolvedMappings) {
-    // Auto-ignored columns
-    if (match.targetField === '__Ignore__') {
-      fieldMappings.push({
-        sourceColumn: match.sourceColumn,
-        targetField: 'ignore',
-        transformType: 'ignore',
-      });
-      continue;
-    }
-
-    // Folder path columns are handled via folderMapping, not fieldMappings
-    if (match.targetField === '__FolderPath__') {
-      continue;
-    }
-
-    const lookupMap = preAnalysis.valueLookups.get(match.targetField);
-    const transformType = lookupMap ? 'lookup' : 'direct';
-
-    fieldMappings.push({
-      sourceColumn: match.sourceColumn,
-      targetField: match.targetField,
-      transformType,
-      lookupMap,
-    });
-  }
-
-  // Add folder mapping if detected
-  const folderMapping = preAnalysis.structure.folderStructure.detected
-    ? { sourceColumn: preAnalysis.structure.folderStructure.column!, pathSeparator: preAnalysis.structure.folderStructure.separator ?? '/' }
-    : undefined;
-
-  // Add test step mapping if detected
-  let testStepMapping = undefined;
-  const step = preAnalysis.structure.stepStructure;
-  if (step.mode === 'separate-rows') {
-    testStepMapping = {
-      mode: 'separate-rows' as const,
-      descriptionColumn: step.stepDescriptionColumn,
-      expectedResultColumn: step.stepExpectedResultColumn,
-      groupingColumn: step.groupingColumn,
-    };
-  } else if (step.mode === 'inline') {
-    testStepMapping = {
-      mode: 'inline' as const,
-      descriptionColumn: step.inlineColumn,
-      stepDelimiter: step.inlineDelimiter === 'semicolon' ? ';' : '\n',
-    };
-  }
-
-  return {
-    fieldMappings,
-    testStepMapping,
-    folderMapping,
-    confidence: preAnalysis.resolvedMappings.length > 0
-      ? Math.min(...preAnalysis.resolvedMappings.map(m => m.confidence))
-      : 1.0,
-    unmappedSourceColumns: preAnalysis.unresolvedColumns,
-    unmappedTargetFields: [],
-    notes: ['Mapping resolved entirely by heuristic pre-analysis (no LLM call).'],
-  };
-}
-
-/**
- * Merges heuristic value lookup maps into an LLM-produced MappingResult.
- * For any lookup-type field mapping where the LLM provided a lookupMap,
- * overlay the heuristic resolutions (which are more reliable for known values).
- */
-function mergeLookupMaps(mappingResult: MappingResult, preAnalysis: PreAnalysisResult): void {
-  for (const fm of mappingResult.fieldMappings) {
-    if (fm.transformType === 'lookup') {
-      const heuristicMap = preAnalysis.valueLookups.get(fm.targetField);
-      if (heuristicMap) {
-        // Heuristic values override LLM values (more reliable)
-        fm.lookupMap = { ...(fm.lookupMap ?? {}), ...heuristicMap };
-      }
-    }
-  }
-}
-
-/**
- * Processes value suggestions: resolves suggested target names to Spira IDs
- * and merges them into the field mapping lookupMaps.
- */
-function processValueSuggestions(mappingResult: MappingResult, metadata: TemplateMetadata): void {
-  if (!mappingResult.valueSuggestions) return;
-
-  for (const suggestion of mappingResult.valueSuggestions) {
-    if (suggestion.suggestedTarget.toUpperCase() === 'SKIP') continue;
-
-    let resolvedId: number | undefined;
-
-    // Check if LLM returned a numeric ID directly
-    const numericId = Number(suggestion.suggestedTarget);
-    if (!isNaN(numericId) && Number.isInteger(numericId)) {
-      // Validate the ID exists in the lookup
-      resolvedId = numericId;
-    }
-
-    // Try matching by name
-    if (resolvedId === undefined) {
-      if (suggestion.field === 'TestCasePriorityId') {
-        const match = metadata.priorities.find(p => p.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-        resolvedId = match?.priorityId;
-      } else if (suggestion.field === 'TestCaseStatusId') {
-        const match = metadata.statuses.find(s => s.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-        resolvedId = match?.testCaseStatusId;
-      } else if (suggestion.field === 'TestCaseTypeId') {
-        const match = metadata.types.find(t => t.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-        resolvedId = match?.testCaseTypeId;
-      } else {
-        const cp = metadata.customProperties.find(p => p.name === suggestion.field);
-        if (cp?.customListId) {
-          const listValues = metadata.customLists.get(cp.customListId);
-          const match = listValues?.find(v => v.name.toLowerCase() === suggestion.suggestedTarget.toLowerCase());
-          resolvedId = match?.customPropertyValueId;
-        }
-      }
-    }
-
-    if (resolvedId !== undefined) {
-      const fm = mappingResult.fieldMappings.find(f => f.targetField === suggestion.field);
-      if (fm) {
-        if (!fm.lookupMap) fm.lookupMap = {};
-        fm.lookupMap[suggestion.sourceValue] = resolvedId;
-        if (fm.transformType === 'direct') fm.transformType = 'lookup';
-      }
-    }
-  }
 }

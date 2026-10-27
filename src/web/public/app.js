@@ -10,6 +10,8 @@ const api = {
 };
 
 let selectedFile = null;
+let selectedFormat = null; // 'zephyr' | 'excel'
+let selectedSheet = null;  // chosen worksheet name (Excel, multi-sheet)
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 document.querySelectorAll('nav button').forEach((btn) => {
@@ -86,21 +88,25 @@ async function refreshFiles() {
     return;
   }
   files.forEach((f) => {
+    const isExcel = !f.isDirectory && /\.xlsx?$/i.test(f.name);
+    const selectable = f.isZephyrBundle || isExcel;
     const div = document.createElement('div');
     div.className = 'file-item';
     const tag = f.isZephyrBundle ? '<span class="badge">Zephyr</span>'
+      : isExcel ? '<span class="badge" style="background:#0d5563;color:#fff;">Excel</span>'
       : f.isDirectory ? '<span class="muted">folder</span>' : '<span class="muted">file</span>';
     div.innerHTML = `<span>${f.name}</span> ${tag}`;
-    if (f.isZephyrBundle) {
+    if (selectable) {
       div.addEventListener('click', () => {
         document.querySelectorAll('.file-item').forEach((i) => i.classList.remove('selected'));
         div.classList.add('selected');
         selectedFile = f.name;
+        selectedFormat = f.isZephyrBundle ? 'zephyr' : 'excel';
         $('parseBtn').disabled = false;
       });
     } else {
       div.style.opacity = '0.6';
-      div.title = 'Only Zephyr bundles are supported in the web UI so far';
+      div.title = 'Select a Zephyr bundle folder or an .xlsx file';
     }
     list.appendChild(div);
   });
@@ -118,39 +124,149 @@ $('uploadBtn').addEventListener('click', async () => {
 });
 
 // ── Parse ─────────────────────────────────────────────────────────────────
-$('parseBtn').addEventListener('click', async () => {
-  if (!selectedFile) return;
-  setStatus($('parseStatus'), 'warn', 'Parsing and validating…');
-  const r = await api.post('/api/parse', { name: selectedFile });
+function hideFrom(...ids) { ids.forEach((id) => $(id).classList.add('hidden')); }
+
+async function doParse(sheet) {
+  setStatus($('parseStatus'), 'warn', sheet ? `Parsing "${sheet}"…` : 'Parsing…');
+  hideFrom('sheetCard', 'mappingCard', 'planCard', 'progressCard');
+  const r = await api.post('/api/parse', { name: selectedFile, sheet });
   if (!r.ok) { setStatus($('parseStatus'), 'err', r.error || 'Parse failed.'); return; }
+
+  if (r.format === 'excel' && r.needsSheetSelection) {
+    setStatus($('parseStatus'), 'ok', 'Workbook has multiple sheets.');
+    renderSheetChoices(r.sheets);
+    return;
+  }
+  if (r.format === 'excel') {
+    selectedSheet = r.sheet;
+    setStatus($('parseStatus'), 'ok', `Parsed "${r.sheet}".` + (r.llmFailed ? ' (LLM unavailable — heuristic mapping only)' : ''));
+    renderMapping(r.mapping, r.summary);
+    return;
+  }
+  // Zephyr
   setStatus($('parseStatus'), 'ok', 'Parsed successfully.');
   renderPlan(r.plan);
+}
+
+$('parseBtn').addEventListener('click', () => { if (selectedFile) doParse(); });
+
+function renderSheetChoices(sheets) {
+  $('sheetCard').classList.remove('hidden');
+  const list = $('sheetList');
+  list.innerHTML = '';
+  sheets.forEach((sh) => {
+    const div = document.createElement('div');
+    div.className = 'file-item';
+    div.innerHTML = `<span>${sh.name}</span> <span class="muted">${sh.rowCount} rows, ${sh.columns} columns</span>`;
+    div.addEventListener('click', () => doParse(sh.name));
+    list.appendChild(div);
+  });
+}
+
+// ── Excel mapping review ─────────────────────────────────────────────────────
+function renderMapping(mapping, summary) {
+  $('mappingCard').classList.remove('hidden');
+  $('mappingConfidence').textContent = `${Math.round(mapping.confidence * 100)}% confidence`;
+  setStatus($('mappingStatus'), 'ok', (summary || '').trim() || 'Mapping ready for review.');
+
+  const tbody = $('mappingTable').querySelector('tbody');
+  tbody.innerHTML = mapping.fieldMappings.map((fm) => {
+    const ignored = fm.transformType === 'ignore';
+    return `<tr${ignored ? ' style="opacity:.55"' : ''}>` +
+      `<td>${escapeHtml(fm.sourceColumn)}</td>` +
+      `<td>${ignored ? '<em>ignored</em>' : escapeHtml(fm.targetField)}</td>` +
+      `<td>${fm.transformType}</td></tr>`;
+  }).join('');
+
+  const vs = mapping.valueSuggestions || [];
+  const box = $('valueSuggestions');
+  if (vs.length === 0) {
+    box.innerHTML = '';
+  } else {
+    box.innerHTML = '<h3 style="font-size:14px;color:var(--teal);margin:16px 0 6px;">Value mappings</h3>' +
+      '<table><thead><tr><th>Field</th><th>Source value</th><th>Maps to</th></tr></thead><tbody>' +
+      vs.map((v, i) => {
+        const opts = ['<option value="SKIP">(skip — leave blank)</option>']
+          .concat((v.options || []).map((o) =>
+            `<option value="${escapeAttr(o)}"${o === v.suggestedTarget ? ' selected' : ''}>${escapeHtml(o)}</option>`));
+        return `<tr><td>${escapeHtml(v.field)}</td><td>${escapeHtml(v.sourceValue)}</td>` +
+          `<td><select data-field="${escapeAttr(v.field)}" data-src="${escapeAttr(v.sourceValue)}">${opts.join('')}</select></td></tr>`;
+      }).join('') + '</tbody></table>';
+  }
+
+  $('mappingNotes').innerHTML = (mapping.notes || []).map((n) => `• ${escapeHtml(n)}`).join('<br>') +
+    (mapping.unmappedSourceColumns && mapping.unmappedSourceColumns.length
+      ? `<br><span style="color:var(--warn)">Unmapped: ${escapeHtml(mapping.unmappedSourceColumns.join(', '))}</span>` : '');
+}
+
+function collectValueEdits() {
+  return [...document.querySelectorAll('#valueSuggestions select')].map((sel) => ({
+    field: sel.dataset.field,
+    sourceValue: sel.dataset.src,
+    target: sel.value,
+  }));
+}
+
+$('acceptMappingBtn').addEventListener('click', async () => {
+  setStatus($('mappingStatus'), 'warn', 'Applying mapping, transforming and validating…');
+  const r = await api.post('/api/excel/accept', { valueEdits: collectValueEdits() });
+  if (!r.ok) { setStatus($('mappingStatus'), 'err', r.error || 'Failed.'); return; }
+  setStatus($('mappingStatus'), 'ok', 'Mapping accepted.');
+  renderPlan(r.plan);
 });
+
+$('feedbackBtn').addEventListener('click', () => $('feedbackBox').classList.toggle('hidden'));
+
+$('feedbackSubmit').addEventListener('click', async () => {
+  const feedback = $('feedbackText').value.trim();
+  if (!feedback) return;
+  setStatus($('mappingStatus'), 'warn', 'Regenerating mapping with your feedback…');
+  const r = await api.post('/api/excel/feedback', { feedback });
+  if (!r.ok) { setStatus($('mappingStatus'), 'err', r.error || 'Failed.'); return; }
+  $('feedbackText').value = '';
+  $('feedbackBox').classList.add('hidden');
+  renderMapping(r.mapping, 'Mapping regenerated.');
+});
+
+function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 
 function renderPlan(plan) {
   $('planCard').classList.remove('hidden');
   const vKind = plan.validationErrors > 0 ? 'err' : 'ok';
+  const extras = [];
+  if (typeof plan.inlineImages === 'number') extras.push(`${plan.inlineImages} inline images`);
+  if (typeof plan.transformErrors === 'number' && plan.transformErrors > 0) extras.push(`${plan.transformErrors} transform errors`);
   $('planSummary').innerHTML =
     `<div class="status ${vKind}">` +
-    `${plan.testCaseCount} test cases, ${plan.stepCount} steps, ${plan.inlineImages} inline images. ` +
+    `${plan.testCaseCount} test cases, ${plan.stepCount} steps${extras.length ? ', ' + extras.join(', ') : ''}. ` +
     `Validation: ${plan.validationErrors} errors, ${plan.validationWarnings} warnings.` +
-    (plan.warnings.length ? `<br><span class="muted">${plan.warnings.length} resolution warning(s)</span>` : '') +
+    (plan.warnings && plan.warnings.length ? `<br><span class="muted">${plan.warnings.length} resolution warning(s)</span>` : '') +
     `</div>`;
 
   if (plan.testSet) {
-    const items = plan.testSet.members.map((k) => `<li>${k}</li>`).join('');
+    const items = plan.testSet.members.map((k) => `<li>${escapeHtml(k)}</li>`).join('');
     $('planTestSet').innerHTML =
       `<div class="card" style="margin-top:12px;background:#eef5f6;">` +
-      `<strong>Test Set:</strong> ${plan.testSet.name}<br>` +
-      `<span class="muted">Folder: ${plan.testSet.folder}</span>` +
+      `<strong>Test Set:</strong> ${escapeHtml(plan.testSet.name)}<br>` +
+      `<span class="muted">Folder: ${escapeHtml(plan.testSet.folder)}</span>` +
       `<ol class="member-order">${items}</ol></div>`;
   } else {
     $('planTestSet').innerHTML = '';
   }
 
+  // Header differs: Zephyr has a Key column, Excel does not.
+  const hasKey = plan.testCases.some((tc) => tc.key !== undefined);
+  const thead = $('planTable').querySelector('thead');
+  thead.innerHTML = hasKey
+    ? '<tr><th>Key</th><th>Name</th><th>Folder</th><th>Steps</th></tr>'
+    : '<tr><th>Name</th><th>Folder</th><th>Steps</th></tr>';
   const tbody = $('planTable').querySelector('tbody');
   tbody.innerHTML = plan.testCases.map((tc) =>
-    `<tr><td>${tc.key}</td><td>${tc.name}</td><td>${tc.folder}</td><td>${tc.steps}</td></tr>`).join('');
+    hasKey
+      ? `<tr><td>${escapeHtml(tc.key || '')}</td><td>${escapeHtml(tc.name)}</td><td>${escapeHtml(tc.folder)}</td><td>${tc.steps}</td></tr>`
+      : `<tr><td>${escapeHtml(tc.name)}</td><td>${escapeHtml(tc.folder)}</td><td>${tc.steps}</td></tr>`
+  ).join('');
 }
 
 // ── Import (SSE) ────────────────────────────────────────────────────────────

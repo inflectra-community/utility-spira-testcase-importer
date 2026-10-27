@@ -155,7 +155,7 @@ All options can be set via environment variables (see above) or CLI flags:
 
 ## Web UI
 
-A browser-based front end is available for Zephyr bundle imports (Excel support in the UI is coming — it needs the interactive mapping-review loop).
+A browser-based front end supports both **Zephyr bundle** and **Excel** imports.
 
 ```bash
 npm start          # builds if needed, then serves http://localhost:4321
@@ -171,9 +171,10 @@ npm run web        # serves http://localhost:4321
 The UI covers:
 
 - **Settings** — Spira connection + LLM provider, saved locally to `data/settings.json` (gitignored; treat it like a `.env`). Includes a "Test Connection" button.
-- **Import** — pick or upload a Zephyr bundle, parse and validate, review the plan (test cases + the ordered Test Set), then dry-run or import with a live progress stream.
+- **Import (Zephyr bundle)** — pick or upload a bundle, parse and validate, review the plan (test cases + the ordered Test Set), then dry-run or import with a live progress stream.
+- **Import (Excel)** — pick or upload an `.xlsx`, choose the worksheet, review the heuristic/LLM mapping (with editable value dropdowns and an "adjust with feedback" option), accept, then review the validation plan and import.
 
-The server is a thin layer over the same pipeline modules the CLI uses — it does not reimplement any import logic. Set `WEB_PORT` to change the port (default `4321`).
+The server is a thin layer over the same pipeline modules the CLI uses — the Excel mapping stage in particular is shared with the CLI via `src/core/excel-mapping.ts`, so the two never diverge. Set `WEB_PORT` to change the port (default `4321`).
 
 > For a quick dev loop without a build step: `npm run web:dev` (runs the TypeScript entry directly via `tsx`).
 

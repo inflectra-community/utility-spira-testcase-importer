@@ -26,28 +26,50 @@ import { createSpiraClient } from '../spira/client.js';
 import { fetchAllMetadata } from '../spira/metadata.js';
 import { isZephyrBundle, parseZephyrBundle } from '../parser/zephyr-bundle.js';
 import { resolveZephyrMetadata } from '../pipeline-zephyr.js';
+import { createExcelParser, type SheetData } from '../parser/index.js';
 import { createValidationEngine } from '../validator/index.js';
+import { createDataTransformer } from '../transformer/index.js';
 import { createImportEngine } from '../importer/index.js';
+import { createMappingEngine } from '../mapping/engine.js';
 import { importTestSet } from '../importer/test-set-importer.js';
 import { uploadAttachments, type PendingAttachment } from '../importer/attachment-handler.js';
+import {
+  generateExcelMapping,
+  processValueSuggestions,
+  availableTargetsForField,
+  DEFAULT_TEST_CASE_FIELDS,
+} from '../core/excel-mapping.js';
 import type { SpiraConfig } from '../types/config.js';
 import type { TransformedTestCase } from '../types/transform.js';
 import type { ZephyrBundleResult } from '../parser/zephyr-bundle.js';
 import type { TemplateMetadata } from '../types/spira.js';
+import type { MappingResult } from '../types/mapping.js';
 
 const INPUT_DIR = path.resolve(process.cwd(), 'input');
 const PUBLIC_DIR = path.resolve(import.meta.dirname, 'public');
 
 /** Session state for the current parse → import flow (single-user tool). */
 interface ParsedSession {
+  format: 'zephyr' | 'excel';
   sourcePath: string;
-  bundle: ZephyrBundleResult;
-  testCases: TransformedTestCase[];
   metadata: TemplateMetadata;
-  keyToRowIndex: Map<string, number>;
+  /** Final transformed test cases ready to import (set once the mapping is accepted). */
+  testCases: TransformedTestCase[];
+  // Zephyr extras
+  bundle?: ZephyrBundleResult;
+  keyToRowIndex?: Map<string, number>;
   warnings: string[];
 }
 let currentSession: ParsedSession | null = null;
+
+/** Excel mapping-in-progress state (between /api/parse and accept). */
+interface ExcelMappingSession {
+  sourcePath: string;
+  sheet: SheetData;
+  metadata: TemplateMetadata;
+  mapping: MappingResult;
+}
+let excelMappingSession: ExcelMappingSession | null = null;
 
 function spiraConfigFromSettings(s: AppSettings): SpiraConfig {
   return {
@@ -151,12 +173,82 @@ export function createServer() {
       res.status(404).json({ ok: false, error: `Not found: ${name}` });
       return;
     }
+    const logger = createLogger();
+
+    // ── Excel branch ────────────────────────────────────────────────────────
     if (!isZephyrBundle(sourcePath)) {
-      res.status(400).json({ ok: false, error: 'Only Zephyr bundles are supported in the web UI so far.' });
+      const ext = path.extname(sourcePath).toLowerCase();
+      if (ext !== '.xlsx' && ext !== '.xls') {
+        res.status(400).json({ ok: false, error: 'Unsupported source. Use a Zephyr bundle folder or an .xlsx/.xls file.' });
+        return;
+      }
+      try {
+        const client = createSpiraClient(spiraConfigFromSettings(s), logger);
+        await client.authenticate();
+        const { metadata } = await fetchAllMetadata(client, spiraConfigFromSettings(s), 0, logger);
+
+        const spreadsheet = await createExcelParser().parse(sourcePath);
+        const { sheet: requestedSheet } = req.body as { sheet?: string };
+
+        // Pick the sheet: explicit request, single sheet, or ask the user to choose.
+        let sheet: SheetData | undefined;
+        if (requestedSheet) {
+          sheet = spreadsheet.sheets.find(x => x.name === requestedSheet);
+          if (!sheet) { res.status(400).json({ ok: false, error: `Worksheet "${requestedSheet}" not found.` }); return; }
+        } else if (spreadsheet.sheets.length === 1) {
+          sheet = spreadsheet.sheets[0];
+        } else {
+          // Multiple sheets and none chosen yet — return the list for selection.
+          res.json({
+            ok: true,
+            format: 'excel',
+            needsSheetSelection: true,
+            sheets: spreadsheet.sheets.map(x => ({ name: x.name, rowCount: x.rowCount, columns: x.headers.length })),
+          });
+          return;
+        }
+
+        if (sheet.rowCount === 0) {
+          res.status(400).json({ ok: false, error: `Worksheet "${sheet.name}" has no data rows.` });
+          return;
+        }
+
+        // Heuristics + LLM mapping via the shared core.
+        const fieldDefinitions = DEFAULT_TEST_CASE_FIELDS;
+        const { mapping, preAnalysis, llmFailed } = await generateExcelMapping(
+          sheet, metadata, s.llm, fieldDefinitions, logger,
+        );
+
+        excelMappingSession = { sourcePath, sheet, metadata, mapping };
+
+        res.json({
+          ok: true,
+          format: 'excel',
+          sheet: sheet.name,
+          llmFailed,
+          summary: preAnalysis.summary,
+          mapping: {
+            fieldMappings: mapping.fieldMappings,
+            unmappedSourceColumns: mapping.unmappedSourceColumns,
+            confidence: mapping.confidence,
+            notes: mapping.notes,
+            testStepMapping: mapping.testStepMapping ?? null,
+            folderMapping: mapping.folderMapping ?? null,
+            valueSuggestions: (mapping.valueSuggestions ?? []).map(vs => ({
+              field: vs.field,
+              sourceValue: vs.sourceValue,
+              suggestedTarget: vs.suggestedTarget,
+              options: availableTargetsForField(vs.field, metadata),
+            })),
+          },
+        });
+      } catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
       return;
     }
 
-    const logger = createLogger();
+    // ── Zephyr branch ─────────────────────────────────────────────────────────
     try {
       const client = createSpiraClient(spiraConfigFromSettings(s), logger);
       await client.authenticate();
@@ -184,6 +276,7 @@ export function createServer() {
       const validation = createValidationEngine().validate(bundle.testCases, metadata);
 
       currentSession = {
+        format: 'zephyr',
         sourcePath,
         bundle,
         testCases: bundle.testCases,
@@ -194,6 +287,7 @@ export function createServer() {
 
       res.json({
         ok: true,
+        format: 'zephyr',
         plan: {
           testCaseCount: bundle.testCases.length,
           stepCount: bundle.testCases.reduce((n, tc) => n + tc.testSteps.length, 0),
@@ -219,6 +313,97 @@ export function createServer() {
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // ── Excel: regenerate mapping with user feedback ────────────────────────────
+  app.post('/api/excel/feedback', async (req, res) => {
+    if (!excelMappingSession) { res.status(400).json({ ok: false, error: 'No Excel mapping in progress.' }); return; }
+    const { feedback } = req.body as { feedback: string };
+    if (!feedback?.trim()) { res.status(400).json({ ok: false, error: 'Feedback is required.' }); return; }
+
+    const s = loadSettings();
+    const logger = createLogger();
+    try {
+      const engine = createMappingEngine(s.llm);
+      const revised = await engine.retryMapping(excelMappingSession.mapping, feedback);
+      // Re-resolve value suggestions against metadata after regeneration.
+      processValueSuggestions(revised, excelMappingSession.metadata);
+      excelMappingSession.mapping = revised;
+
+      res.json({
+        ok: true,
+        mapping: {
+          fieldMappings: revised.fieldMappings,
+          unmappedSourceColumns: revised.unmappedSourceColumns,
+          confidence: revised.confidence,
+          notes: revised.notes,
+          testStepMapping: revised.testStepMapping ?? null,
+          folderMapping: revised.folderMapping ?? null,
+          valueSuggestions: (revised.valueSuggestions ?? []).map(vs => ({
+            field: vs.field,
+            sourceValue: vs.sourceValue,
+            suggestedTarget: vs.suggestedTarget,
+            options: availableTargetsForField(vs.field, excelMappingSession!.metadata),
+          })),
+        },
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ── Excel: accept mapping (with optional value edits) → transform + validate ─
+  app.post('/api/excel/accept', (req, res) => {
+    if (!excelMappingSession) { res.status(400).json({ ok: false, error: 'No Excel mapping in progress.' }); return; }
+    const s = loadSettings();
+    const { valueEdits } = req.body as { valueEdits?: { field: string; sourceValue: string; target: string }[] };
+
+    const { sheet, metadata, mapping } = excelMappingSession;
+
+    // Apply user edits to the value suggestions, then re-resolve to IDs.
+    if (valueEdits && mapping.valueSuggestions) {
+      for (const edit of valueEdits) {
+        const vs = mapping.valueSuggestions.find(v => v.field === edit.field && v.sourceValue === edit.sourceValue);
+        if (vs) vs.suggestedTarget = edit.target;
+      }
+      processValueSuggestions(mapping, metadata);
+    }
+
+    // Transform + validate.
+    const transform = createDataTransformer().transform(sheet.rows, mapping, metadata);
+    const validation = createValidationEngine().validate(transform.testCases, metadata);
+
+    // Apply root folder prefix.
+    if (s.import.rootFolder) {
+      const sep = mapping.folderMapping?.pathSeparator ?? '/';
+      for (const tc of transform.testCases) {
+        tc.folderPath = tc.folderPath ? `${s.import.rootFolder}${sep}${tc.folderPath}` : s.import.rootFolder;
+      }
+    }
+
+    currentSession = {
+      format: 'excel',
+      sourcePath: excelMappingSession.sourcePath,
+      metadata,
+      testCases: transform.testCases,
+      warnings: transform.warnings.map(w => `Row ${w.rowIndex}: ${w.message}`),
+    };
+
+    res.json({
+      ok: true,
+      plan: {
+        testCaseCount: transform.testCases.length,
+        stepCount: transform.testCases.reduce((n, tc) => n + tc.testSteps.length, 0),
+        validationErrors: validation.stats.errorCount,
+        validationWarnings: validation.stats.warningCount,
+        transformErrors: transform.errors.length,
+        testCases: transform.testCases.slice(0, 200).map(tc => ({
+          name: tc.name,
+          folder: tc.folderPath ?? '(root)',
+          steps: tc.testSteps.length,
+        })),
+      },
+    });
   });
 
   // ── Import (SSE progress) ───────────────────────────────────────────────────
@@ -260,9 +445,9 @@ export function createServer() {
         onProgress: (current, total, item) => send('progress', { current, total, item }),
       });
 
-      // Attachments
+      // Attachments (Zephyr only — inline images from the bundle)
       let attachSummary: { uploaded: number; skipped: number; failed: number } | undefined;
-      if (!dryRun && session.bundle.pendingAttachments.length > 0 && importResult.createdTestCases.size > 0) {
+      if (!dryRun && session.bundle && session.bundle.pendingAttachments.length > 0 && importResult.createdTestCases.size > 0) {
         send('phase', { message: 'Uploading inline images' });
         const pending: PendingAttachment[] = [];
         for (const ref of session.bundle.pendingAttachments) {
@@ -286,9 +471,9 @@ export function createServer() {
         }
       }
 
-      // Test Set
+      // Test Set (Zephyr only — from the test cycle)
       let testSetSummary: unknown;
-      if (session.bundle.testSet) {
+      if (session.bundle?.testSet && session.keyToRowIndex) {
         send('phase', { message: 'Creating Test Set' });
         const keyToTestCaseId = new Map<string, number>();
         for (const [key, rowIndex] of session.keyToRowIndex) {

@@ -5,19 +5,17 @@
 - **SpiraProvisioner integration** — exports unmatched columns + missing list values as a SpiraProvisioner JSON file (with list-vs-text inference via variability scoring). Available in the Excel mapping-review step.
 - **Zephyr Scale bundle import** — `src/parser/zephyr-bundle.ts` parses a bundle directory (`testcases/*.json`, inline attachments, `testcycle/*.json`) and maps directly to the import pipeline. Auto-detected when `SOURCE_PATH` is a directory containing `testcases/`.
 - **Zephyr Test Set creation with ordering** — the bundle's test cycle becomes a Spira Test Set: folder hierarchy built, members added, `Position` set to preserve cycle order. Execution history intentionally excluded.
-- **Web UI (Zephyr path)** — Express server (`src/web/`) + single-page front end for settings, source selection/upload, plan review, and live (SSE) import progress. Excel support in the UI is still pending (needs the mapping-review loop — see "Web UI: Excel path" below).
+- **Web UI (Zephyr + Excel)** — Express server (`src/web/`) + single-page front end for settings, source selection/upload, plan review, and live (SSE) import progress. Both import paths work: Zephyr bundles (plan review + ordered Test Set) and Excel (worksheet selection → mapping review with editable value dropdowns and LLM feedback → validation plan). The Excel mapping stage is shared with the CLI via `src/core/excel-mapping.ts`.
 
 ## Planned Features (Next Iterations)
 
-### A. Web UI: Excel path
-**Priority:** High (completes the UI)
+### A. Web UI polish (follow-ups)
+**Priority:** Medium
 
-The web UI currently handles Zephyr bundles only. The Excel path needs the interactive mapping-review loop (heuristics → LLM → user edits → regenerate) exposed over HTTP. This is gated on the core/adapter refactor (see `docs/refactor-plan.md`): extract pipeline orchestration from I/O so both the CLI (inquirer) and Web (request/response) adapters can drive the same stages.
-
-- Mapping review as an editable table with value dropdowns
-- Validation report with row references
-- "Export unmatched fields for SpiraProvisioner" action
-- Drag-and-drop upload for `.xlsx`
+The Excel path works end-to-end; remaining niceties:
+- "Export unmatched fields for SpiraProvisioner" action in the web mapping review (the CLI has this; the web UI does not yet).
+- Editable field-mapping table (currently value mappings are editable, but field→target reassignment is only via LLM feedback).
+- Drag-and-drop upload (currently a file picker).
 
 ### B. Bulk Test Set Creation / Cross-Product Copy
 **Priority:** Medium (customer follow-up)
