@@ -6,7 +6,7 @@ LLM-assisted artifact importer for Spira — uses heuristic pre-analysis and LLM
 
 ## Quick Start for non-developers (web UI)
 
-If you just want to import a **Zephyr Scale bundle** through a web page — no command line beyond a couple of steps — follow this.
+If you just want to import your test cases (an **Excel file** or a **Zephyr Scale bundle**) through a web page — no command line beyond a couple of steps — follow this.
 
 **1. Install Node.js (one time).**
 Download the **LTS** version from [nodejs.org](https://nodejs.org) and run the installer with the default options. This repo needs **Node 20.6 or newer** (the LTS build is fine).
@@ -31,11 +31,11 @@ The first run installs dependencies and builds the app (this takes a minute). Wh
   Spira Importer UI → http://localhost:4321
 ```
 
-**5. Open that address in your web browser.** Enter your Spira details on the **Settings** tab (and click *Test Connection*), then go to the **Import** tab to upload a Zephyr bundle and import it.
+**5. Open that address in your web browser.** Enter your Spira details on the **Settings** tab (and click *Test Connection*), then go to the **Import** tab to upload a source and import it.
 
 On later runs you only need `npm start`.
 
-> Excel imports currently run through the command line (see below); the web UI handles Zephyr bundles.
+> The web UI handles **both** Excel files and Zephyr bundles. The command line (below) does too — it's the same engine, just a different front end.
 
 ---
 
@@ -150,7 +150,7 @@ All options can be set via environment variables (see above) or CLI flags:
 
 | Format | Detection | LLM Required | Entry Points |
 |--------|-----------|--------------|--------------|
-| Excel (.xlsx / .xls) | File with a spreadsheet extension | Yes | CLI |
+| Excel (.xlsx / .xls) | File with a spreadsheet extension | Yes | CLI, Web UI |
 | Zephyr Scale Bundle | Directory containing `testcases/*.json` | No | CLI, Web UI |
 
 ## Web UI
@@ -201,6 +201,7 @@ flowchart TD
 
     CLI --> EXCEL["Excel pipeline<br/>src/pipeline.ts"]
     CLI --> ZEPHYR["Zephyr pipeline<br/>src/pipeline-zephyr.ts"]
+    WEB --> EXCEL
     WEB --> ZEPHYR
 
     subgraph excelflow ["Excel path"]
