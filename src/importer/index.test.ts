@@ -31,7 +31,7 @@ function createMockClient(overrides?: Partial<SpiraApiClient>): SpiraApiClient {
     createTestSet: vi.fn().mockResolvedValue({ TestSetId: 1 }),
     addTestCaseToSet: vi.fn().mockResolvedValue(undefined),
     getTestCaseMappings: vi.fn().mockResolvedValue([]),
-    updateTestCaseMappings: vi.fn().mockResolvedValue(undefined),
+    updateTestCaseMapping: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }

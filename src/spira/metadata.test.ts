@@ -129,7 +129,7 @@ function createFullMockClient(): SpiraApiClient {
     createTestSet: vi.fn(),
     addTestCaseToSet: vi.fn(),
     getTestCaseMappings: vi.fn(),
-    updateTestCaseMappings: vi.fn(),
+    updateTestCaseMapping: vi.fn(),
   };
 }
 
@@ -291,7 +291,7 @@ describe('fetchAllMetadata', () => {
       createTestSet: vi.fn(),
       addTestCaseToSet: vi.fn(),
       getTestCaseMappings: vi.fn(),
-      updateTestCaseMappings: vi.fn(),
+      updateTestCaseMapping: vi.fn(),
     };
     const logger = createMockLogger();
     const config = createMockConfig();

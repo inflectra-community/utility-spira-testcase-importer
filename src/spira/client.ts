@@ -75,7 +75,7 @@ export interface SpiraApiClient {
   createTestSet(testSet: CreateTestSetRequest): Promise<{ TestSetId: number }>;
   addTestCaseToSet(testSetId: number, testCaseId: number): Promise<void>;
   getTestCaseMappings(testSetId: number): Promise<TestSetTestCaseMapping[]>;
-  updateTestCaseMappings(testSetId: number, mappings: TestSetTestCaseMapping[]): Promise<void>;
+  updateTestCaseMapping(testSetId: number, mapping: TestSetTestCaseMapping): Promise<void>;
 }
 
 /**
@@ -469,14 +469,18 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
   }
 
   /**
-   * Updates test case mappings for a test set (used to set execution order via Position).
+   * Updates a single test case mapping for a test set (used to set execution order via Position).
    * PUT /projects/{project_id}/test-sets/{test_set_id}/test-case-mapping
+   *
+   * The endpoint takes a SINGLE RemoteTestSetTestCaseMapping object (not an array).
+   * Note: if the Position value is already in use by another mapping, Spira ignores
+   * the change — so callers should sequence updates to avoid transient collisions.
    */
-  async function updateTestCaseMappings(testSetId: number, mappings: TestSetTestCaseMapping[]): Promise<void> {
+  async function updateTestCaseMapping(testSetId: number, mapping: TestSetTestCaseMapping): Promise<void> {
     await request<unknown>(
       'PUT',
       `/projects/${config.projectId}/test-sets/${testSetId}/test-case-mapping`,
-      mappings,
+      mapping,
     );
   }
 
@@ -512,6 +516,6 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
     createTestSet,
     addTestCaseToSet,
     getTestCaseMappings,
-    updateTestCaseMappings,
+    updateTestCaseMapping,
   };
 }

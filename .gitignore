@@ -149,3 +149,6 @@ spira-provisioner-*.json
 # Input dropzone (directory tracked, contents ignored)
 input/*
 !input/.gitkeep
+
+# Local Kiro workspace MCP config (machine-specific credentials)
+.kiro/settings/

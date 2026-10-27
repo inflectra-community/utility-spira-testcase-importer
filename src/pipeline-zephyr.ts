@@ -230,12 +230,18 @@ export async function runZephyrPipeline(
   if (bundleResult.testSet) {
     logger.info(`Phase 7.5: Creating Test Set "${bundleResult.testSet.name}"...`);
 
-    // Build Zephyr key → created Spira test case ID
+    // Build Zephyr key → created Spira test case ID.
+    // In dry-run no test cases are created, so use the row index as a placeholder
+    // ID purely to let the planner show which members (and order) would be mapped.
     const keyToTestCaseId = new Map<string, number>();
     for (const [key, rowIndex] of keyToRowIndex) {
-      const testCaseId = importResult.createdTestCases.get(rowIndex);
-      if (testCaseId !== undefined) {
-        keyToTestCaseId.set(key, testCaseId);
+      if (config.dryRun) {
+        keyToTestCaseId.set(key, rowIndex); // placeholder — not a real Spira ID
+      } else {
+        const testCaseId = importResult.createdTestCases.get(rowIndex);
+        if (testCaseId !== undefined) {
+          keyToTestCaseId.set(key, testCaseId);
+        }
       }
     }
 
@@ -250,7 +256,16 @@ export async function runZephyrPipeline(
     for (const w of testSetResult.warnings) logger.warn(w);
     if (testSetResult.error) {
       process.stdout.write(`  ${RED}Test Set creation failed: ${testSetResult.error}${RESET}\n`);
-    } else if (!config.dryRun) {
+    } else if (config.dryRun) {
+      process.stdout.write(`  ${DIM}Would create Test Set:${RESET} "${testSetResult.testSetName}"\n`);
+      const members = testSetResult.plannedMembers ?? [];
+      members.forEach((key, i) => {
+        process.stdout.write(`    ${DIM}${i + 1}. ${key}${RESET}\n`);
+      });
+      if (testSetResult.membersSkipped > 0) {
+        process.stdout.write(`    ${YELLOW}${testSetResult.membersSkipped} member(s) would be skipped${RESET}\n`);
+      }
+    } else {
       process.stdout.write(`  Test Set: "${testSetResult.testSetName}" created ` +
         `(${testSetResult.membersAdded} members` +
         `${testSetResult.membersSkipped > 0 ? `, ${testSetResult.membersSkipped} skipped` : ''}` +

@@ -47,6 +47,8 @@ export interface TestSetImportResult {
   foldersCreated: string[];
   warnings: string[];
   error?: string;
+  /** Dry-run only: the ordered member keys that would be added */
+  plannedMembers?: string[];
 }
 
 /**
@@ -81,7 +83,23 @@ export async function importTestSet(
     logger.info(`[dry-run] Would create Test Set "${testSet.name}"` +
       (folderPath ? ` in folder "${folderPath}"` : '') +
       ` with ${testSet.memberKeys.length} member(s).`);
-    result.warnings.push('Dry-run: no Test Set was created.');
+
+    // Report the intended member order so it can be eyeballed before a live run.
+    let position = 1;
+    for (const key of testSet.memberKeys) {
+      const resolvable = keyToTestCaseId.has(key);
+      if (resolvable) {
+        result.membersAdded++;
+        logger.info(`[dry-run]   ${position}. ${key}`);
+      } else {
+        result.membersSkipped++;
+        result.warnings.push(`Member "${key}" would be skipped (test case not imported).`);
+      }
+      position++;
+    }
+    result.orderingApplied = result.membersAdded > 1;
+    result.plannedMembers = testSet.memberKeys.filter(k => keyToTestCaseId.has(k));
+    result.warnings.unshift('Dry-run: no Test Set was created (plan shown above).');
     return result;
   }
 
@@ -167,14 +185,33 @@ async function applyOrdering(
     }
   });
 
-  const updated: TestSetTestCaseMapping[] = mappings.map(m => ({
-    ...m,
-    Position: positionByTestCaseId.get(m.TestCaseId) ?? m.Position,
-  }));
+  // PUT each mapping individually (the endpoint takes a single object).
+  // Spira ignores a Position change if that position is already in use, so we
+  // update in descending target-position order to minimise transient collisions.
+  const updates = mappings
+    .map(m => ({ mapping: m, target: positionByTestCaseId.get(m.TestCaseId) ?? m.Position }))
+    .filter(u => u.target !== undefined && u.target !== u.mapping.Position)
+    .sort((a, b) => (b.target ?? 0) - (a.target ?? 0));
 
-  await client.updateTestCaseMappings(testSetId, updated);
-  logger.info(`Applied execution order to ${updated.length} Test Set member(s).`);
-  return true;
+  if (updates.length === 0) {
+    // Positions already match the intended order (members were added in order).
+    logger.info('Test Set members already in the correct order — no reordering needed.');
+    return true;
+  }
+
+  let applied = 0;
+  for (const u of updates) {
+    try {
+      await client.updateTestCaseMapping(testSetId, { ...u.mapping, Position: u.target });
+      applied++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      warnings.push(`Could not set position for test case ${u.mapping.TestCaseId}: ${msg}`);
+    }
+  }
+
+  logger.info(`Applied execution order to ${applied} Test Set member(s).`);
+  return applied > 0;
 }
 
 /**
