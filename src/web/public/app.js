@@ -291,6 +291,17 @@ async function generateProvisioner(endpoint, programId, productId, resultId) {
         `<tr><td>${escapeHtml(m.property)}</td><td>${m.added}</td><td>${escapeHtml(m.sample.join(', '))}</td></tr>`).join('') +
       '</tbody></table>';
   }
+  // Guidance: the list-vs-text type is inferred from the values seen, which can
+  // be wrong on small samples. Prompt the user to review before provisioning.
+  if (r.newFields && r.newFields.length) {
+    html += '<div class="status warn" style="margin-top:12px;">' +
+      '<strong>Before you run SpiraProvisioner, review the field types above.</strong><br>' +
+      'Each type (<em>list</em> vs <em>text</em>) is a best guess based on the values found in this source. ' +
+      'A column with only a few distinct values here may actually be a drop-down (list) in your process, ' +
+      'and vice-versa. The downloaded file is plain JSON — edit a field\'s <code>"type"</code> ' +
+      '(and add a <code>"values"</code> array for lists) if the guess is off.' +
+      '</div>';
+  }
   if (r.unprovisionable && r.unprovisionable.length) {
     html += `<p class="muted" style="margin-top:10px;">Not provisionable here (add manually in Spira): ${escapeHtml(r.unprovisionable.join(', '))}</p>`;
   }

@@ -75,3 +75,19 @@ Parse Robot Framework test suites and create matching test cases in Spira, extra
 - Suite hierarchy (directories / suite files) → Spira folder structure
 - Joins the existing pipeline at the `TransformedTestCase[]` stage, like the Zephyr parser (structural mapping, no LLM needed)
 - Auto-detect: directory or file containing `.robot` suites
+
+---
+
+### G. First-party Zephyr Scale Extractor
+**Priority:** TBD (future)
+
+Build our own Zephyr Scale → bundle extractor (connects to Jira + Zephyr Scale, produces the bundle format this tool consumes). The motivating gap: a customer's own extractor (e.g. Dr. Oetker's — which we can't modify, they own it) omits field *type* information, so when we provision new custom properties we have to **guess** list-vs-text from the handful of values present in the export. On small samples that guess is often wrong (a real drop-down with 2–3 values looks like free text).
+
+A first-party extractor would capture the Zephyr field definitions directly:
+- Record each custom field's Zephyr type (e.g. single-select / multi-select / text / date) in the bundle.
+- Emit the full allowed-value set for dropdowns, not just the values that happen to appear on the exported test cases.
+- The importer could then provision custom properties with the correct type and complete list of options — no inference, no guessing.
+
+Until then, the provisioner export in the web UI shows guidance telling the user to review the inferred field types and edit the downloaded JSON before running SpiraProvisioner.
+
+Related: this would also let us capture things the current bundle format drops (field types, complete option lists), improving fidelity beyond just provisioning.
