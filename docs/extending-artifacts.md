@@ -2,6 +2,8 @@
 
 The importer is designed to support any Spira artifact type via the `ArtifactStrategy` pattern. Currently only Test Cases are implemented, but the architecture supports Requirements, Incidents, Tasks, and any other artifact.
 
+> **Status:** Only the `test-case` strategy is registered today (`src/strategies/index.ts`). The `RequirementStrategy` shown below is an **illustrative example of how you would add one** — it is not implemented or shipped. The Excel pipeline is parameterised to accept it; the Zephyr pipeline is test-case-specific.
+
 ## The Strategy Interface
 
 Each artifact type implements `ArtifactStrategy` (defined in `src/types/strategy.ts`):

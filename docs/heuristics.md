@@ -2,6 +2,8 @@
 
 The heuristic module (`src/heuristics/`) runs deterministically before any LLM call. It analyses your spreadsheet columns and values against the Spira template metadata, resolving as much as possible without network calls or token costs.
 
+> **Scope:** this module serves the **Excel** import path only. The **Zephyr** path doesn't use `src/heuristics/` at all — Zephyr data is already structured, so it uses its own, simpler fuzzy name matcher (`fuzzyMatchName` in `src/pipeline-zephyr.ts`) to resolve Zephyr field names/values to Spira IDs. The two matchers are independent and have different strategy orderings.
+
 ## How It Works
 
 ```

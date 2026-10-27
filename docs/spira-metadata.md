@@ -14,6 +14,7 @@ The tool fetches template and project metadata from the Spira REST API to unders
 | Users | `GET /projects/{id}/users` | Owner resolution |
 | Components | `GET /projects/{id}/components?active_only=true&include_deleted=false` | Component resolution |
 | Test Folders | `GET /projects/{id}/test-folders` | Folder reuse (don't recreate existing folders) |
+| Test Set Folders | `GET /projects/{id}/test-set-folders` | Test Set folder reuse (Zephyr Test Set import) |
 
 ## Authentication
 
@@ -68,6 +69,21 @@ The Spira API uses different value fields depending on the custom property type:
 | 8 | User | `IntegerValue` | User ID |
 
 **Important:** Single-select List (type 6) uses `IntegerValue`, NOT `IntegerListValue`. The API silently accepts `IntegerListValue` for type 6 but does not persist the value.
+
+## Test Set Endpoints (Zephyr import)
+
+When importing a Zephyr bundle that includes a test cycle, the tool also uses the Test Set endpoints to create a Spira Test Set and map its member test cases in order:
+
+| Operation | Endpoint |
+|-----------|----------|
+| List test set folders | `GET /projects/{id}/test-set-folders` |
+| Create a test set folder | `POST /projects/{id}/test-set-folders` |
+| Create a test set | `POST /projects/{id}/test-sets` |
+| Add a test case to a set | `POST /projects/{id}/test-sets/{testSetId}/test-case-mapping/{testCaseId}` |
+| Read the set's mappings | `GET /projects/{id}/test-sets/{testSetId}/test-case-mapping` |
+| Update a mapping (set `Position`) | `PUT /projects/{id}/test-sets/{testSetId}/test-case-mapping` |
+
+**Ordering gotcha:** the add-mapping endpoint cannot set `Position`. To preserve the Zephyr cycle's execution order, members are added first, then the mappings are re-read and PUT back one at a time with sequential `Position` values. Spira ignores a `Position` change that collides with one already in use, so updates are applied in descending target-position order. See `src/importer/test-set-importer.ts`.
 
 ## Partial Failure Handling
 

@@ -2,6 +2,8 @@
 
 The LLM is invoked only when heuristic pre-analysis cannot resolve all column mappings. Its scope is reduced to genuinely ambiguous columns.
 
+> **Excel path only.** The LLM is part of the Excel import flow. The **Zephyr** path never calls the LLM — structured bundle data is mapped directly and resolved with a deterministic fuzzy matcher (see `docs/heuristics.md`).
+
 ## When the LLM Is Called
 
 The LLM is invoked when `preAnalysis.fullyResolved === false` — meaning one or more columns couldn't be matched deterministically.
