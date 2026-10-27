@@ -1,5 +1,7 @@
 # Requirements Document
 
+> **Scope:** This spec is the authoritative record of the original MVP — the Excel → LLM → CLI import flow. Capabilities added later (Zephyr bundle import, Test Sets, the web UI, SpiraProvisioner export, heuristic pre-analysis, and the artifact-strategy pattern) are specified in the companion document `.kiro/specs/importer-beyond-mvp/requirements.md`.
+
 ## Introduction
 
 The LLM Test Case Importer is a Node.js/TypeScript tool that enables Spira customers to import test cases from Excel spreadsheets by leveraging a customer-chosen LLM to handle the data mapping between arbitrary Excel formats and Spira's data model. The tool retrieves template metadata (custom properties, list values) from a target Spira instance, uses an LLM to reconcile customer test case data to the expected Spira format, and then safely injects the mapped data via the Spira REST API.
