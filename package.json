@@ -9,12 +9,17 @@
   },
   "scripts": {
     "build": "tsc && node scripts/copy-assets.mjs",
+    "start": "node scripts/start.mjs",
+    "setup": "npm install && npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js --import features/support/setup.ts",
     "lint": "tsc --noEmit",
     "web": "node dist/web/index.js",
     "web:dev": "node --import tsx src/web/index.ts"
+  },
+  "engines": {
+    "node": ">=20.6.0"
   },
   "keywords": [
     "spira",

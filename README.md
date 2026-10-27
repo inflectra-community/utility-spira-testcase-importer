@@ -2,7 +2,46 @@
 
 LLM-assisted artifact importer for Spira — uses heuristic pre-analysis and LLMs to map arbitrary Excel spreadsheets to Spira's data model. Also supports direct import from Zephyr Scale JSON bundles (no LLM needed).
 
-## Quick Start
+---
+
+## Quick Start for non-developers (web UI)
+
+If you just want to import a **Zephyr Scale bundle** through a web page — no command line beyond a couple of steps — follow this.
+
+**1. Install Node.js (one time).**
+Download the **LTS** version from [nodejs.org](https://nodejs.org) and run the installer with the default options. This repo needs **Node 20.6 or newer** (the LTS build is fine).
+
+**2. Get this project onto your computer.**
+Either clone it with Git, or on the GitHub page click **Code → Download ZIP** and unzip it somewhere you can find.
+
+**3. Open a terminal in the project folder.**
+- Windows: open the unzipped folder in File Explorer, click the address bar, type `powershell`, and press Enter.
+- macOS: right-click the folder → Services → **New Terminal at Folder**.
+
+**4. Start the app:**
+
+```bash
+npm install
+npm start
+```
+
+The first run installs dependencies and builds the app (this takes a minute). When it's ready you'll see a line like:
+
+```
+  Spira Importer UI → http://localhost:4321
+```
+
+**5. Open that address in your web browser.** Enter your Spira details on the **Settings** tab (and click *Test Connection*), then go to the **Import** tab to upload a Zephyr bundle and import it.
+
+On later runs you only need `npm start`.
+
+> Excel imports currently run through the command line (see below); the web UI handles Zephyr bundles.
+
+---
+
+## Quick Start (developers / CLI)
+
+**Prerequisite:** Node.js **20.6+** (22 LTS recommended). The tool uses `--env-file`, native `fetch`, and `import.meta.dirname`, all of which require a recent Node.
 
 ### 1. Install
 
@@ -117,6 +156,12 @@ All options can be set via environment variables (see above) or CLI flags:
 ## Web UI
 
 A browser-based front end is available for Zephyr bundle imports (Excel support in the UI is coming — it needs the interactive mapping-review loop).
+
+```bash
+npm start          # builds if needed, then serves http://localhost:4321
+```
+
+`npm start` is the easiest entry point — it checks your Node version, builds the app if it hasn't been built (or if the source changed), and launches the server. If you prefer the explicit steps:
 
 ```bash
 npm run build
