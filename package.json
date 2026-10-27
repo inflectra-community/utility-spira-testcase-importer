@@ -8,11 +8,13 @@
     "spira-import": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-assets.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node --import tsx ./node_modules/@cucumber/cucumber/bin/cucumber.js --import features/support/setup.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "web": "node dist/web/index.js",
+    "web:dev": "node --import tsx src/web/index.ts"
   },
   "keywords": [
     "spira",
@@ -33,14 +35,18 @@
     "ai": "^6.0.209",
     "commander": "^15.0.0",
     "exceljs": "^4.4.0",
+    "express": "^5.2.1",
     "inquirer": "^14.0.2",
+    "multer": "^2.2.0",
     "typescript": "^6.0.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cucumber/cucumber": "^13.0.0",
     "@cucumber/pretty-formatter": "^4.0.0",
+    "@types/express": "^5.0.6",
     "@types/inquirer": "^9.0.10",
+    "@types/multer": "^2.2.0",
     "@types/node": "^26.1.0",
     "fast-check": "^4.8.0",
     "ts-node": "^10.9.2",

@@ -373,7 +373,7 @@ function fuzzyMatchName<T>(
  *
  * Mutates testCases in-place. Returns an array of warning messages for unresolved values.
  */
-function resolveZephyrMetadata(
+export function resolveZephyrMetadata(
   testCases: TransformedTestCase[],
   metadata: TemplateMetadata,
 ): string[] {
