@@ -171,7 +171,7 @@ npm run web        # serves http://localhost:4321
 The UI covers:
 
 - **Settings** — Spira connection + LLM provider, saved locally to `data/settings.json` (gitignored; treat it like a `.env`). Includes a "Test Connection" button.
-- **Import (Zephyr bundle)** — pick or upload a bundle, parse and validate, review the plan (test cases + the ordered Test Set), then dry-run or import with a live progress stream.
+- **Import (Zephyr bundle)** — pick or upload a bundle, parse and validate, review the plan (test cases + the ordered Test Set). When the bundle references custom properties or list values the template lacks, export a **SpiraProvisioner** structure file to add them. Then dry-run or import with a live progress stream.
 - **Import (Excel)** — pick or upload an `.xlsx`, choose the worksheet, review the heuristic/LLM mapping (with editable value dropdowns and an "adjust with feedback" option). When columns or values aren't in the template yet, export a **SpiraProvisioner** structure file to add them. Accept the mapping, review the validation plan, then dry-run or import. After a dry-run, "Import to Spira" is offered as the next step.
 
 The server is a thin layer over the same pipeline modules the CLI uses — the Excel mapping stage in particular is shared with the CLI via `src/core/excel-mapping.ts`, so the two never diverge. Set `WEB_PORT` to change the port (default `4321`).

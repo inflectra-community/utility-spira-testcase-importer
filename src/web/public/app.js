@@ -151,7 +151,7 @@ async function doParse(sheet) {
   }
   // Zephyr
   setStatus($('parseStatus'), 'ok', 'Parsed successfully.');
-  renderPlan(r.plan);
+  renderPlan(r.plan, { hasGaps: r.hasGaps });
 }
 
 $('parseBtn').addEventListener('click', () => { if (selectedFile) doParse(); });
@@ -257,14 +257,16 @@ $('feedbackSubmit').addEventListener('click', async () => {
 // ── SpiraProvisioner export ──────────────────────────────────────────────────
 $('provisionerBtn').addEventListener('click', () => $('provisionerBox').classList.toggle('hidden'));
 
-$('provGenerate').addEventListener('click', async () => {
-  $('provResult').innerHTML = '<div class="status warn">Generating…</div>';
-  const r = await api.post('/api/excel/provisioner', {
-    programName: $('provProgram').value.trim(),
-    productName: $('provProduct').value.trim(),
+// Shared provisioner generate+download+summary, used by both Excel and Zephyr.
+async function generateProvisioner(endpoint, programId, productId, resultId) {
+  const resultEl = $(resultId);
+  resultEl.innerHTML = '<div class="status warn">Generating…</div>';
+  const r = await api.post(endpoint, {
+    programName: $(programId).value.trim(),
+    productName: $(productId).value.trim(),
   });
-  if (!r.ok) { $('provResult').innerHTML = `<div class="status err">${escapeHtml(r.error || 'Failed.')}</div>`; return; }
-  if (r.empty) { $('provResult').innerHTML = `<div class="status ok">${escapeHtml(r.message)}</div>`; return; }
+  if (!r.ok) { resultEl.innerHTML = `<div class="status err">${escapeHtml(r.error || 'Failed.')}</div>`; return; }
+  if (r.empty) { resultEl.innerHTML = `<div class="status ok">${escapeHtml(r.message)}</div>`; return; }
 
   // Download the structure file.
   const blob = new Blob([JSON.stringify(r.config, null, 2)], { type: 'application/json' });
@@ -274,31 +276,45 @@ $('provGenerate').addEventListener('click', async () => {
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 
-  // Show what it contains.
   let html = `<div class="status ok">Downloaded <strong>${escapeHtml(r.filename)}</strong>. Run SpiraProvisioner with it, then re-run this import.</div>`;
-  if (r.newFields.length) {
+  if (r.newFields && r.newFields.length) {
     html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">New custom properties</h3>' +
       '<table><thead><tr><th>Name</th><th>Type</th><th>Variability</th><th>Unique values</th></tr></thead><tbody>' +
-      r.newFields.map((f) => {
-        const badge = f.type === 'list' ? 'list' : f.type;
-        return `<tr><td>${escapeHtml(f.name)}</td><td>${badge}</td><td>${f.variability}%</td><td>${f.uniqueValues}</td></tr>`;
-      }).join('') + '</tbody></table>';
+      r.newFields.map((f) =>
+        `<tr><td>${escapeHtml(f.name)}</td><td>${f.type}</td><td>${f.variability}%</td><td>${f.uniqueValues}</td></tr>`).join('') +
+      '</tbody></table>';
   }
-  if (r.missingValues.length) {
+  if (r.missingValues && r.missingValues.length) {
     html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">List values to add</h3>' +
       '<table><thead><tr><th>Property</th><th>Values added</th><th>Sample</th></tr></thead><tbody>' +
       r.missingValues.map((m) =>
         `<tr><td>${escapeHtml(m.property)}</td><td>${m.added}</td><td>${escapeHtml(m.sample.join(', '))}</td></tr>`).join('') +
       '</tbody></table>';
   }
-  $('provResult').innerHTML = html;
-});
+  if (r.unprovisionable && r.unprovisionable.length) {
+    html += `<p class="muted" style="margin-top:10px;">Not provisionable here (add manually in Spira): ${escapeHtml(r.unprovisionable.join(', '))}</p>`;
+  }
+  resultEl.innerHTML = html;
+}
+
+$('provGenerate').addEventListener('click', () =>
+  generateProvisioner('/api/excel/provisioner', 'provProgram', 'provProduct', 'provResult'));
+
+$('zProvGenerate').addEventListener('click', () =>
+  generateProvisioner('/api/zephyr/provisioner', 'zProvProgram', 'zProvProduct', 'zProvResult'));
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 
-function renderPlan(plan) {
+function renderPlan(plan, opts) {
+  opts = opts || {};
   $('planCard').classList.remove('hidden');
+
+  // Zephyr provisioner section — only when the bundle references template gaps.
+  const zp = $('zephyrProvisioner');
+  if (opts.hasGaps) { zp.classList.remove('hidden'); }
+  else { zp.classList.add('hidden'); $('zProvResult').innerHTML = ''; }
+
   const vKind = plan.validationErrors > 0 ? 'err' : 'ok';
   const extras = [];
   if (typeof plan.inlineImages === 'number') extras.push(`${plan.inlineImages} inline images`);
@@ -441,6 +457,9 @@ function resetImport() {
   $('mappingNotes').innerHTML = '';
   $('feedbackText').value = '';
   $('feedbackBox').classList.add('hidden');
+  $('zProvResult').innerHTML = '';
+  $('zProvProgram').value = '';
+  $('zProvProduct').value = '';
   $('resultSummary').innerHTML = '';
   $('log').textContent = '';
   $('progressBar').style.width = '0';

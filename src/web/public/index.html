@@ -179,6 +179,18 @@
       <div id="planSummary"></div>
       <div id="planTestSet"></div>
       <table id="planTable"><thead><tr><th>Key</th><th>Name</th><th>Folder</th><th>Steps</th></tr></thead><tbody></tbody></table>
+
+      <!-- Zephyr: provisioner export (shown when the bundle references template gaps) -->
+      <div id="zephyrProvisioner" class="hidden" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;">
+        <p class="muted">This bundle references custom properties or values that aren't in your Spira template yet. Export a <strong>SpiraProvisioner</strong> structure file to add them, then re-run the import.</p>
+        <div class="row">
+          <div><label>Program name</label><input id="zProvProgram" placeholder="My Program" /></div>
+          <div><label>Product name</label><input id="zProvProduct" placeholder="My Product" /></div>
+        </div>
+        <button class="ghost" id="zProvGenerate" style="margin-top:10px;">Generate &amp; download template changes</button>
+        <div id="zProvResult"></div>
+      </div>
+
       <div style="margin-top:14px;">
         <button class="ghost" id="dryRunBtn">Dry Run</button>
         <button class="primary" id="importBtn" style="margin-left:8px;">Import to Spira</button>

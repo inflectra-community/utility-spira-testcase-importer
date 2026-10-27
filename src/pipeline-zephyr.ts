@@ -496,3 +496,113 @@ export function resolveZephyrMetadata(
 
   return warnings;
 }
+
+// --- Exported: Zephyr gap analysis for SpiraProvisioner export ---
+
+/**
+ * A new custom property the Zephyr data references but the template lacks,
+ * together with the values seen for it (used to infer list-vs-text + seed a list).
+ */
+export interface ZephyrNewProperty {
+  name: string;
+  /** Distinct non-empty values observed across all test cases */
+  uniqueValues: string[];
+  /** How many test cases carried a value for this property */
+  rowCount: number;
+}
+
+/**
+ * An existing list-type custom property that is missing some of the values the
+ * Zephyr data uses.
+ */
+export interface ZephyrMissingListValues {
+  propertyName: string;
+  existingValues: string[];
+  missingValues: string[];
+}
+
+export interface ZephyrGapAnalysis {
+  newProperties: ZephyrNewProperty[];
+  missingListValues: ZephyrMissingListValues[];
+  /** Priority/status/component names not found — informational only (not provisionable as custom fields) */
+  unprovisionableLookups: string[];
+}
+
+/**
+ * Inspects a freshly-parsed Zephyr bundle against the template metadata and
+ * collects the structural gaps, WITHOUT mutating the test cases.
+ *
+ * Must be called BEFORE resolveZephyrMetadata(), while test cases still carry
+ * their `_zephyrMeta` and named custom properties.
+ *
+ * Mirrors the matching logic in resolveZephyrMetadata so the gaps reported here
+ * are exactly the ones resolution would warn about.
+ */
+export function analyzeZephyrGaps(
+  testCases: TransformedTestCase[],
+  metadata: TemplateMetadata,
+): ZephyrGapAnalysis {
+  // Accumulate, per unmatched CP name, the set of values seen.
+  const newProps = new Map<string, Set<string>>();
+  // Per existing list CP name, the set of values seen that aren't in the list.
+  const missingByProp = new Map<string, { def: typeof metadata.customProperties[number]; missing: Set<string> }>();
+  const unprovisionable = new Set<string>();
+
+  for (const tc of testCases) {
+    const meta = (tc as any)._zephyrMeta as { priority?: string; status?: string; component?: string } | undefined;
+
+    // Priority / status / component gaps — not provisionable as custom fields.
+    if (meta?.priority && !fuzzyMatchName(meta.priority, metadata.priorities, p => p.name, p => p.active)) {
+      unprovisionable.add(`Priority: ${meta.priority}`);
+    }
+    if (meta?.status && !fuzzyMatchName(meta.status, metadata.statuses, s => s.name, s => s.active)) {
+      unprovisionable.add(`Status: ${meta.status}`);
+    }
+    if (meta?.component && !fuzzyMatchName(meta.component, metadata.components, c => c.name, c => c.active)) {
+      unprovisionable.add(`Component: ${meta.component}`);
+    }
+
+    for (const cp of tc.customProperties) {
+      const cpName: string | undefined = (cp as any).name;
+      if (!cpName) continue;
+      const value = cp.value != null ? String(cp.value).trim() : '';
+
+      const cpDef = fuzzyMatchName(cpName, metadata.customProperties, d => d.name);
+      if (!cpDef) {
+        // New property — accumulate its values.
+        if (!newProps.has(cpName)) newProps.set(cpName, new Set());
+        if (value) newProps.get(cpName)!.add(value);
+        continue;
+      }
+
+      // Existing list property — check whether the value is in the list.
+      if (cpDef.customPropertyTypeId === 6 && cpDef.customListId && value) {
+        const listValues = metadata.customLists.get(cpDef.customListId);
+        const inList = listValues && fuzzyMatchName(value, listValues, v => v.name, v => v.active);
+        if (!inList) {
+          if (!missingByProp.has(cpDef.name)) {
+            missingByProp.set(cpDef.name, { def: cpDef, missing: new Set() });
+          }
+          missingByProp.get(cpDef.name)!.missing.add(value);
+        }
+      }
+    }
+  }
+
+  const newProperties: ZephyrNewProperty[] = [...newProps.entries()].map(([name, values]) => ({
+    name,
+    uniqueValues: [...values],
+    rowCount: values.size,
+  }));
+
+  const missingListValues: ZephyrMissingListValues[] = [...missingByProp.values()].map(({ def, missing }) => {
+    const listValues = def.customListId ? metadata.customLists.get(def.customListId) ?? [] : [];
+    return {
+      propertyName: def.name,
+      existingValues: listValues.map(v => v.name),
+      missingValues: [...missing],
+    };
+  });
+
+  return { newProperties, missingListValues, unprovisionableLookups: [...unprovisionable] };
+}

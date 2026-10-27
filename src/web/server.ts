@@ -25,7 +25,7 @@ import { createLogger } from '../logger/index.js';
 import { createSpiraClient } from '../spira/client.js';
 import { fetchAllMetadata } from '../spira/metadata.js';
 import { isZephyrBundle, parseZephyrBundle } from '../parser/zephyr-bundle.js';
-import { resolveZephyrMetadata } from '../pipeline-zephyr.js';
+import { resolveZephyrMetadata, analyzeZephyrGaps, type ZephyrGapAnalysis } from '../pipeline-zephyr.js';
 import { createExcelParser, type SheetData } from '../parser/index.js';
 import { createValidationEngine } from '../validator/index.js';
 import { createDataTransformer } from '../transformer/index.js';
@@ -60,6 +60,7 @@ interface ParsedSession {
   // Zephyr extras
   bundle?: ZephyrBundleResult;
   keyToRowIndex?: Map<string, number>;
+  zephyrGaps?: ZephyrGapAnalysis;
   warnings: string[];
 }
 let currentSession: ParsedSession | null = null;
@@ -269,6 +270,9 @@ export function createServer() {
         if (key) keyToRowIndex.set(key, tc.sourceRowIndex);
       }
 
+      // Collect template gaps BEFORE resolution strips _zephyrMeta / named CPs.
+      const gaps = analyzeZephyrGaps(bundle.testCases, metadata);
+
       const warnings = resolveZephyrMetadata(bundle.testCases, metadata);
 
       if (s.import.rootFolder) {
@@ -289,11 +293,15 @@ export function createServer() {
         metadata,
         keyToRowIndex,
         warnings,
+        zephyrGaps: gaps,
       };
+
+      const hasGaps = gaps.newProperties.length > 0 || gaps.missingListValues.length > 0;
 
       res.json({
         ok: true,
         format: 'zephyr',
+        hasGaps,
         plan: {
           testCaseCount: bundle.testCases.length,
           stepCount: bundle.testCases.reduce((n, tc) => n + tc.testSteps.length, 0),
@@ -465,6 +473,64 @@ export function createServer() {
       filename: `spira-provisioner-${stamp}.json`,
       newFields: newFieldSummary,
       missingValues: missingValueSummary,
+      config,
+    });
+  });
+
+  // ── Zephyr: export a SpiraProvisioner structure file ────────────────────────
+  // Uses the gaps collected during parse (new custom properties + missing list
+  // values). Reuses the same generateProvisionerConfig/inferFieldType as Excel.
+  app.post('/api/zephyr/provisioner', (req, res) => {
+    const session = currentSession;
+    if (!session || session.format !== 'zephyr' || !session.zephyrGaps) {
+      res.status(400).json({ ok: false, error: 'No Zephyr bundle parsed.' });
+      return;
+    }
+    const { programName, productName } = req.body as { programName?: string; productName?: string };
+    const gaps = session.zephyrGaps;
+
+    if (gaps.newProperties.length === 0 && gaps.missingListValues.length === 0) {
+      res.json({ ok: true, empty: true, message: 'Nothing to provision — every field and value is already in the template.' });
+      return;
+    }
+
+    // Adapt Zephyr gaps to the provisioner module's input shapes.
+    const newColumns = gaps.newProperties.map(p => ({
+      columnName: p.name,
+      uniqueValues: p.uniqueValues,
+      rowCount: p.rowCount,
+    }));
+    const missingValues = gaps.missingListValues.map(m => ({
+      propertyName: m.propertyName,
+      existingValues: m.existingValues,
+      missingValues: m.missingValues,
+    }));
+
+    const config = generateProvisionerConfig({
+      programName: programName?.trim() || 'My Program',
+      productName: productName?.trim() || (session.metadata.projectId ? `Project ${session.metadata.projectId}` : 'My Product'),
+      newColumns,
+      missingValues,
+    });
+
+    const newFieldSummary = newColumns.map(col => {
+      const { type, variabilityScore } = inferFieldType(col, 20);
+      return { name: col.columnName, type, variability: Math.round(variabilityScore * 100), uniqueValues: col.uniqueValues.length };
+    });
+    const missingValueSummary = missingValues.map(mv => ({
+      property: mv.propertyName,
+      added: mv.missingValues.length,
+      sample: mv.missingValues.slice(0, 8),
+    }));
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    res.json({
+      ok: true,
+      empty: false,
+      filename: `spira-provisioner-${stamp}.json`,
+      newFields: newFieldSummary,
+      missingValues: missingValueSummary,
+      unprovisionable: gaps.unprovisionableLookups,
       config,
     });
   });
