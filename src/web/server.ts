@@ -24,7 +24,7 @@ import { loadSettings, saveSettings, isConfigured, maskedSettings, type AppSetti
 import { createLogger } from '../logger/index.js';
 import { createSpiraClient } from '../spira/client.js';
 import { fetchAllMetadata } from '../spira/metadata.js';
-import { isZephyrBundle, parseZephyrBundle } from '../parser/zephyr-bundle.js';
+import { isZephyrBundle, parseZephyrBundle, findZephyrBundles } from '../parser/zephyr-bundle.js';
 import { resolveZephyrMetadata, analyzeZephyrGaps, type ZephyrGapAnalysis } from '../pipeline-zephyr.js';
 import { createExcelParser, type SheetData } from '../parser/index.js';
 import { createValidationEngine } from '../validator/index.js';
@@ -32,6 +32,7 @@ import { createDataTransformer } from '../transformer/index.js';
 import { createImportEngine } from '../importer/index.js';
 import { createMappingEngine } from '../mapping/engine.js';
 import { importTestSet } from '../importer/test-set-importer.js';
+import { createTestSetFolderResolver } from '../importer/test-set-folder-resolver.js';
 import { uploadAttachments, type PendingAttachment } from '../importer/attachment-handler.js';
 import {
   generateExcelMapping,
@@ -139,16 +140,38 @@ export function createServer() {
   // ── File listing / upload ─────────────────────────────────────────────────
   app.get('/api/files', (_req, res) => {
     const entries = fs.readdirSync(INPUT_DIR, { withFileTypes: true });
-    const files = entries
-      .filter(e => !e.name.startsWith('.'))
-      .map(e => {
-        const full = path.join(INPUT_DIR, e.name);
-        return {
-          name: e.name,
-          isDirectory: e.isDirectory(),
-          isZephyrBundle: e.isDirectory() && isZephyrBundle(full),
-        };
-      });
+    const files: Array<{ name: string; isDirectory: boolean; isZephyrBundle: boolean; bundleLabel?: string }> = [];
+
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      const full = path.join(INPUT_DIR, e.name);
+
+      if (e.isDirectory()) {
+        const bundles = findZephyrBundles(full);
+        if (bundles.length === 0) {
+          // A plain folder with nothing parseable inside.
+          files.push({ name: e.name, isDirectory: true, isZephyrBundle: false });
+        } else if (bundles.length === 1 && bundles[0].path === full) {
+          // Flat export: the folder itself is the bundle.
+          files.push({ name: e.name, isDirectory: true, isZephyrBundle: true });
+        } else {
+          // Nested / multi-project export: expose each project as its own entry.
+          // The `name` is a path relative to input/ so /api/parse can resolve it.
+          for (const b of bundles) {
+            const relName = path.relative(INPUT_DIR, b.path).split(path.sep).join('/');
+            files.push({
+              name: relName,
+              isDirectory: true,
+              isZephyrBundle: true,
+              bundleLabel: `${e.name} › ${b.name}`,
+            });
+          }
+        }
+      } else {
+        files.push({ name: e.name, isDirectory: false, isZephyrBundle: false });
+      }
+    }
+
     res.json({ files });
   });
 
@@ -298,6 +321,11 @@ export function createServer() {
 
       const hasGaps = gaps.newProperties.length > 0 || gaps.missingListValues.length > 0;
 
+      // Only count members this bundle can actually resolve (cycles in a
+      // multi-project export may reference test cases from sibling projects).
+      const resolvableMembers = (ts: typeof bundle.testSets[number]) =>
+        ts.memberKeys.filter(k => keyToRowIndex.has(k));
+
       res.json({
         ok: true,
         format: 'zephyr',
@@ -315,11 +343,18 @@ export function createServer() {
             folder: tc.folderPath ?? '(root)',
             steps: tc.testSteps.length,
           })),
+          testSets: bundle.testSets.map(ts => ({
+            name: ts.name,
+            folder: ts.folderPath ?? '(root)',
+            members: resolvableMembers(ts),
+            skipped: ts.memberKeys.length - resolvableMembers(ts).length,
+          })),
+          // Back-compat for any older client code reading a single testSet.
           testSet: bundle.testSet
             ? {
                 name: bundle.testSet.name,
                 folder: bundle.testSet.folderPath ?? '(root)',
-                members: bundle.testSet.memberKeys,
+                members: resolvableMembers(bundle.testSet),
               }
             : null,
         },
@@ -600,10 +635,17 @@ export function createServer() {
         }
       }
 
-      // Test Set (Zephyr only — from the test cycle)
-      let testSetSummary: unknown;
-      if (session.bundle?.testSet && session.keyToRowIndex) {
-        send('phase', { message: 'Creating Test Set' });
+      // Test Sets (Zephyr only — one per test cycle). A nested-format project
+      // can carry several cycles; each becomes its own Spira Test Set.
+      const testSetSummaries: Array<{
+        name: string;
+        membersAdded: number;
+        membersSkipped: number;
+        ordered: boolean;
+        error?: string;
+      }> = [];
+      const testSets = session.bundle?.testSets ?? [];
+      if (testSets.length > 0 && session.keyToRowIndex) {
         const keyToTestCaseId = new Map<string, number>();
         for (const [key, rowIndex] of session.keyToRowIndex) {
           if (dryRun) {
@@ -613,19 +655,31 @@ export function createServer() {
             if (id !== undefined) keyToTestCaseId.set(key, id);
           }
         }
+        // Resolve test-set folders once and reuse across all sets so cycles
+        // sharing a folder path don't each recreate it.
         const existingFolders = dryRun ? [] : await client.getTestSetFolders();
-        const tsr = await importTestSet(
-          { testSet: session.bundle.testSet, keyToTestCaseId },
-          { client, logger, existingTestSetFolders: existingFolders, rootFolder: s.import.rootFolder },
-          { dryRun },
-        );
-        testSetSummary = {
-          name: tsr.testSetName,
-          membersAdded: tsr.membersAdded,
-          membersSkipped: tsr.membersSkipped,
-          ordered: tsr.orderingApplied,
-          error: tsr.error,
-        };
+        const sharedFolderResolver = createTestSetFolderResolver(client, existingFolders, logger, '/');
+        for (const testSet of testSets) {
+          send('phase', { message: `Creating Test Set "${testSet.name}"` });
+          const tsr = await importTestSet(
+            { testSet, keyToTestCaseId },
+            {
+              client,
+              logger,
+              existingTestSetFolders: existingFolders,
+              rootFolder: s.import.rootFolder,
+              folderResolver: dryRun ? undefined : sharedFolderResolver,
+            },
+            { dryRun },
+          );
+          testSetSummaries.push({
+            name: tsr.testSetName,
+            membersAdded: tsr.membersAdded,
+            membersSkipped: tsr.membersSkipped,
+            ordered: tsr.orderingApplied,
+            error: tsr.error,
+          });
+        }
       }
 
       send('complete', {
@@ -637,7 +691,9 @@ export function createServer() {
         durationMs: importResult.duration,
         failures: importResult.failures.slice(0, 20),
         attachments: attachSummary,
-        testSet: testSetSummary,
+        testSets: testSetSummaries,
+        // Back-compat: expose the first set under the old key too.
+        testSet: testSetSummaries[0],
       });
     } catch (err) {
       send('error', { message: err instanceof Error ? err.message : String(err) });

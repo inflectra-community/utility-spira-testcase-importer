@@ -95,7 +95,10 @@ async function refreshFiles() {
     const tag = f.isZephyrBundle ? '<span class="badge">Zephyr</span>'
       : isExcel ? '<span class="badge" style="background:#0d5563;color:#fff;">Excel</span>'
       : f.isDirectory ? '<span class="muted">folder</span>' : '<span class="muted">file</span>';
-    div.innerHTML = `<span>${f.name}</span> ${tag}`;
+    // `bundleLabel` is set for sub-bundles of a multi-project export; show the
+    // friendly "Export › Project" label but keep selecting by the real name.
+    const label = f.bundleLabel || f.name;
+    div.innerHTML = `<span>${escapeHtml(label)}</span> ${tag}`;
     if (selectable) {
       div.addEventListener('click', () => {
         document.querySelectorAll('.file-item').forEach((i) => i.classList.remove('selected'));
@@ -337,13 +340,23 @@ function renderPlan(plan, opts) {
     (plan.warnings && plan.warnings.length ? `<br><span class="muted">${plan.warnings.length} resolution warning(s)</span>` : '') +
     `</div>`;
 
-  if (plan.testSet) {
-    const items = plan.testSet.members.map((k) => `<li>${escapeHtml(k)}</li>`).join('');
-    $('planTestSet').innerHTML =
-      `<div class="card" style="margin-top:12px;background:#eef5f6;">` +
-      `<strong>Test Set:</strong> ${escapeHtml(plan.testSet.name)}<br>` +
-      `<span class="muted">Folder: ${escapeHtml(plan.testSet.folder)}</span>` +
-      `<ol class="member-order">${items}</ol></div>`;
+  // A bundle may define several test sets (one per Zephyr cycle). Fall back to
+  // the single `testSet` for older server responses.
+  const testSets = plan.testSets || (plan.testSet ? [plan.testSet] : []);
+  if (testSets.length) {
+    const heading = testSets.length > 1
+      ? `<p class="muted" style="margin:12px 0 4px;">${testSets.length} test sets will be created:</p>`
+      : '';
+    $('planTestSet').innerHTML = heading + testSets.map((ts) => {
+      const items = ts.members.map((k) => `<li>${escapeHtml(k)}</li>`).join('');
+      const skipNote = ts.skipped
+        ? ` <span class="muted">(${ts.skipped} member(s) from other projects skipped)</span>`
+        : '';
+      return `<div class="card" style="margin-top:12px;background:#eef5f6;">` +
+        `<strong>Test Set:</strong> ${escapeHtml(ts.name)}${skipNote}<br>` +
+        `<span class="muted">Folder: ${escapeHtml(ts.folder)} — ${ts.members.length} member(s)</span>` +
+        `<ol class="member-order">${items}</ol></div>`;
+    }).join('');
   } else {
     $('planTestSet').innerHTML = '';
   }
@@ -387,11 +400,12 @@ function runImport(dryRun) {
     let html = `<div class="status ${d.failureCount ? 'warn' : 'ok'}">` +
       `${d.dryRun ? 'DRY RUN — ' : ''}${d.successCount}/${d.totalAttempted} test cases, ` +
       `${d.foldersCreated} folders, ${(d.durationMs / 1000).toFixed(1)}s.`;
-    if (d.testSet) {
-      html += `<br>Test Set "${d.testSet.name}": ${d.testSet.membersAdded} members` +
-        (d.testSet.ordered ? ' (ordered)' : '') +
-        (d.testSet.membersSkipped ? `, ${d.testSet.membersSkipped} skipped` : '') +
-        (d.testSet.error ? ` — ERROR: ${d.testSet.error}` : '');
+    const doneSets = d.testSets || (d.testSet ? [d.testSet] : []);
+    for (const ts of doneSets) {
+      html += `<br>Test Set "${escapeHtml(ts.name)}": ${ts.membersAdded} members` +
+        (ts.ordered ? ' (ordered)' : '') +
+        (ts.membersSkipped ? `, ${ts.membersSkipped} skipped` : '') +
+        (ts.error ? ` — ERROR: ${escapeHtml(ts.error)}` : '');
     }
     if (d.attachments) html += `<br>Attachments: ${d.attachments.uploaded} uploaded, ${d.attachments.skipped} skipped, ${d.attachments.failed} failed`;
     html += '</div>';

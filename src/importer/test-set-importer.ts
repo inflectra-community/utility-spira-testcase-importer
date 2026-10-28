@@ -13,7 +13,7 @@ import type { SpiraApiClient } from '../spira/client.js';
 import type { Logger } from '../logger/index.js';
 import type { TestSetFolder, TestSetTestCaseMapping } from '../types/import.js';
 import type { ZephyrTestSet } from '../parser/zephyr-bundle.js';
-import { createTestSetFolderResolver } from './test-set-folder-resolver.js';
+import { createTestSetFolderResolver, type TestSetFolderResolver } from './test-set-folder-resolver.js';
 
 // Default Spira Test Set status: "Not Started" (1). We are not importing
 // execution history, so imported sets start clean and ready to run.
@@ -27,6 +27,13 @@ export interface TestSetImportConfig {
   existingTestSetFolders: TestSetFolder[];
   /** Optional root folder to nest the imported test set folder under */
   rootFolder?: string;
+  /**
+   * Optional shared folder resolver. When importing several test sets in one
+   * run, pass a single resolver so folders created for one set are reused by
+   * the next (avoids duplicate folders). If omitted, a resolver is created
+   * from `existingTestSetFolders`.
+   */
+  folderResolver?: TestSetFolderResolver;
 }
 
 export interface TestSetImportInput {
@@ -60,7 +67,7 @@ export async function importTestSet(
   options: { dryRun: boolean },
 ): Promise<TestSetImportResult> {
   const { testSet, keyToTestCaseId } = input;
-  const { client, logger, existingTestSetFolders, rootFolder } = config;
+  const { client, logger, existingTestSetFolders, rootFolder, folderResolver } = config;
 
   const result: TestSetImportResult = {
     testSetName: testSet.name,
@@ -104,12 +111,16 @@ export async function importTestSet(
   }
 
   try {
-    // 1. Resolve the test set folder
+    // 1. Resolve the test set folder. Reuse a shared resolver when provided so
+    // folders created for an earlier set in the same run aren't recreated.
     let folderId: number | null = null;
     if (folderPath) {
-      const folderResolver = createTestSetFolderResolver(client, existingTestSetFolders, logger, '/');
-      folderId = await folderResolver.resolve(folderPath);
-      result.foldersCreated = folderResolver.getCreatedFolders();
+      const resolver = folderResolver
+        ?? createTestSetFolderResolver(client, existingTestSetFolders, logger, '/');
+      const createdBefore = resolver.getCreatedFolders().length;
+      folderId = await resolver.resolve(folderPath);
+      // Report only folders this call actually created.
+      result.foldersCreated = resolver.getCreatedFolders().slice(createdBefore);
     }
 
     // 2. Create the test set

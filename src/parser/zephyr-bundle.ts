@@ -4,15 +4,27 @@
  * Parses a Zephyr Scale test cycle export bundle (directory containing testcases/*.json)
  * and maps directly to TransformedTestCase[] — no heuristics or LLM needed.
  *
- * Bundle structure expected:
- *   <bundleDir>/
- *     testcases/         - One JSON file per test case (e.g. PROJ-T94.json)
- *     attachments/
- *       inline/          - Inline images referenced in step HTML
- *         _map.json      - Maps attachment IDs to local filenames
- *     issues/            - Linked Jira issues (not imported as test cases)
- *     MANIFEST.txt       - Bundle metadata
- *     checksums.txt      - Integrity checksums
+ * Two bundle layouts are supported:
+ *
+ *   "Flat" (classic single-project export):
+ *     <bundleDir>/
+ *       testcases/       - One JSON file per test case (e.g. PROJ-T94.json)
+ *       testcycle/       - One JSON file per test cycle → Spira Test Set
+ *       attachments/inline/ - Inline images + _map.json
+ *       MANIFEST.txt, checksums.txt, issues/
+ *
+ *   "Nested / multi-project" (newer migration export):
+ *     <exportDir>/
+ *       <PROJECT_A>/
+ *         raw/testcases/   - Test case JSON files
+ *         raw/testruns/    - Test cycle JSON files → one Spira Test Set each
+ *         attachments/inline/
+ *       <PROJECT_B>/ ...
+ *
+ * findZephyrBundles() discovers the bundle root(s) in either layout. Each root
+ * is parsed independently into its own ZephyrBundleResult. parseZephyrBundle()
+ * resolves the testcases/testcycle directories flexibly (directly under the
+ * root, or nested under raw/, and accepts either "testcycle" or "testruns").
  *
  * Field mapping:
  *   name           → TestCase.Name
@@ -104,8 +116,31 @@ export interface ZephyrBundleResult {
   pendingAttachments: ZephyrAttachmentRef[];
   /** Bundle metadata from MANIFEST.txt (informational) */
   manifest?: string;
-  /** Test set (from testcycle/*.json), if present */
+  /**
+   * Test sets (from testcycle/*.json or raw/testruns/*.json). A nested-format
+   * project can contain several cycles; each becomes its own Spira Test Set.
+   */
+  testSets: ZephyrTestSet[];
+  /**
+   * First test set, kept for backward compatibility with callers that assumed
+   * one cycle per bundle. Prefer `testSets`.
+   */
   testSet?: ZephyrTestSet;
+}
+
+/**
+ * A discovered Zephyr bundle root — a directory that directly contains the
+ * test case data (either `testcases/` or `raw/testcases/`).
+ */
+export interface ZephyrBundleRef {
+  /**
+   * Display name for the bundle. For a nested multi-project export this is the
+   * project folder name (e.g. "JBPT"); for a flat export it is the folder's
+   * own name.
+   */
+  name: string;
+  /** Absolute path to the bundle root directory. */
+  path: string;
 }
 
 /**
@@ -143,23 +178,107 @@ export interface ZephyrAttachmentRef {
   attachmentId: string;
 }
 
-/**
- * Detects whether a given path looks like a Zephyr Scale bundle directory.
- * Checks: is a directory, contains a testcases/ subdirectory with at least one .json file.
- */
-export function isZephyrBundle(sourcePath: string): boolean {
+/** Candidate relative locations for the test case JSON directory. */
+const TESTCASE_DIR_CANDIDATES = ['testcases', path.join('raw', 'testcases')];
+/** Candidate relative locations for the test cycle JSON directory. */
+const CYCLE_DIR_CANDIDATES = ['testcycle', path.join('raw', 'testruns')];
+
+/** Returns true if `dir` exists, is a directory, and holds at least one .json file. */
+function hasJsonFiles(dir: string): boolean {
   try {
-    const stat = fs.statSync(sourcePath);
-    if (!stat.isDirectory()) return false;
-
-    const testcasesDir = path.join(sourcePath, 'testcases');
-    if (!fs.existsSync(testcasesDir)) return false;
-
-    const files = fs.readdirSync(testcasesDir);
-    return files.some(f => f.endsWith('.json'));
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return false;
+    return fs.readdirSync(dir).some(f => f.endsWith('.json'));
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolves the test case directory for a bundle root, tolerating both the flat
+ * (`testcases/`) and nested (`raw/testcases/`) layouts. Returns undefined if
+ * none is found.
+ */
+function resolveTestcasesDir(bundleRoot: string): string | undefined {
+  return TESTCASE_DIR_CANDIDATES
+    .map(rel => path.join(bundleRoot, rel))
+    .find(hasJsonFiles);
+}
+
+/**
+ * Resolves the test cycle directory for a bundle root, accepting both
+ * `testcycle/` (flat) and `raw/testruns/` (nested). Returns undefined if none.
+ */
+function resolveCycleDir(bundleRoot: string): string | undefined {
+  return CYCLE_DIR_CANDIDATES
+    .map(rel => path.join(bundleRoot, rel))
+    .find(hasJsonFiles);
+}
+
+/**
+ * Resolves the inline attachments directory, tolerating both `attachments/inline`
+ * (flat + nested share this) relative to the bundle root.
+ */
+function resolveInlineDir(bundleRoot: string): string {
+  return path.join(bundleRoot, 'attachments', 'inline');
+}
+
+/** True if the directory itself is a parseable Zephyr bundle root. */
+function isBundleRoot(dir: string): boolean {
+  return resolveTestcasesDir(dir) !== undefined;
+}
+
+/**
+ * Discovers every Zephyr bundle root at or beneath `sourcePath`.
+ *
+ * Handles three cases:
+ *   1. `sourcePath` is itself a bundle root (flat export)      → [sourcePath]
+ *   2. `sourcePath` wraps one or more project subdirectories   → [each project]
+ *      that are bundle roots (nested multi-project export)
+ *   3. a single wrapper folder containing a bundle root        → [the inner root]
+ *
+ * Returns an empty array if nothing parseable is found or the path is not a
+ * directory (e.g. an un-extracted .zip).
+ */
+export function findZephyrBundles(sourcePath: string): ZephyrBundleRef[] {
+  try {
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isDirectory()) {
+      return [];
+    }
+  } catch {
+    return [];
+  }
+
+  // Case 1: the path itself is a bundle root.
+  if (isBundleRoot(sourcePath)) {
+    return [{ name: path.basename(sourcePath), path: sourcePath }];
+  }
+
+  // Cases 2 & 3: look one level down for bundle roots (e.g. per-project folders).
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(sourcePath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const bundles: ZephyrBundleRef[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const childPath = path.join(sourcePath, entry.name);
+    if (isBundleRoot(childPath)) {
+      bundles.push({ name: entry.name, path: childPath });
+    }
+  }
+
+  return bundles.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Detects whether a given path contains at least one Zephyr Scale bundle,
+ * in either the flat or nested multi-project layout.
+ */
+export function isZephyrBundle(sourcePath: string): boolean {
+  return findZephyrBundles(sourcePath).length > 0;
 }
 
 /**
@@ -167,8 +286,13 @@ export function isZephyrBundle(sourcePath: string): boolean {
  * This is a direct structural mapping — no heuristics or LLM involved.
  */
 export function parseZephyrBundle(bundlePath: string): ZephyrBundleResult {
-  const testcasesDir = path.join(bundlePath, 'testcases');
-  const inlineDir = path.join(bundlePath, 'attachments', 'inline');
+  const testcasesDir = resolveTestcasesDir(bundlePath);
+  if (!testcasesDir) {
+    throw new Error(
+      `Not a Zephyr bundle: no testcases/ or raw/testcases/ directory with JSON files found in "${bundlePath}".`,
+    );
+  }
+  const inlineDir = resolveInlineDir(bundlePath);
 
   // Load attachment map if present
   let attachmentMap: AttachmentMap = {};
@@ -202,41 +326,50 @@ export function parseZephyrBundle(bundlePath: string): ZephyrBundleResult {
     pendingAttachments.push(...attachmentRefs);
   }
 
-  // Read test cycle (Test Set), if present
-  const testSet = parseTestCycle(bundlePath);
+  // Read test cycles (Test Sets), if present. A nested-format project may
+  // contain several; each becomes its own Spira Test Set.
+  const testSets = parseTestCycles(bundlePath);
 
-  return { testCases, pendingAttachments, manifest, testSet };
+  return { testCases, pendingAttachments, manifest, testSets, testSet: testSets[0] };
 }
 
 /**
- * Parses the testcycle/*.json file (if present) into a ZephyrTestSet.
- * Member order is taken from the cycle's items[] array.
+ * Parses every testcycle/*.json (flat) or raw/testruns/*.json (nested) file
+ * into ZephyrTestSet entries. Member order within each set is taken from the
+ * cycle's items[] array. Returns an empty array if no cycles are present.
  */
-function parseTestCycle(bundlePath: string): ZephyrTestSet | undefined {
-  const cycleDir = path.join(bundlePath, 'testcycle');
-  if (!fs.existsSync(cycleDir)) return undefined;
+function parseTestCycles(bundlePath: string): ZephyrTestSet[] {
+  const cycleDir = resolveCycleDir(bundlePath);
+  if (!cycleDir) return [];
 
   const cycleFiles = fs.readdirSync(cycleDir).filter(f => f.endsWith('.json')).sort();
-  if (cycleFiles.length === 0) return undefined;
 
-  // A bundle represents a single cycle; use the first file.
-  const raw = fs.readFileSync(path.join(cycleDir, cycleFiles[0]), 'utf-8');
-  const cycle: ZephyrTestCycle = JSON.parse(raw);
+  const testSets: ZephyrTestSet[] = [];
+  for (const file of cycleFiles) {
+    try {
+      const raw = fs.readFileSync(path.join(cycleDir, file), 'utf-8');
+      const cycle: ZephyrTestCycle = JSON.parse(raw);
 
-  const memberKeys = (cycle.items ?? [])
-    .map(item => item.testCaseKey)
-    .filter((k): k is string => !!k);
+      const memberKeys = (cycle.items ?? [])
+        .map(item => item.testCaseKey)
+        .filter((k): k is string => !!k);
 
-  return {
-    key: cycle.key,
-    name: cycle.name,
-    folderPath: cycle.folder ?? undefined,
-    status: cycle.status,
-    iteration: cycle.iteration,
-    plannedStartDate: cycle.plannedStartDate,
-    plannedEndDate: cycle.plannedEndDate,
-    memberKeys,
-  };
+      testSets.push({
+        key: cycle.key,
+        name: cycle.name,
+        folderPath: cycle.folder ?? undefined,
+        status: cycle.status,
+        iteration: cycle.iteration,
+        plannedStartDate: cycle.plannedStartDate,
+        plannedEndDate: cycle.plannedEndDate,
+        memberKeys,
+      });
+    } catch {
+      // Skip malformed cycle files rather than failing the whole import.
+    }
+  }
+
+  return testSets;
 }
 
 // --- Internal mapping ---
