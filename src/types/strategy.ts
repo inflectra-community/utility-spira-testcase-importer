@@ -41,7 +41,7 @@ export interface TransformedArtifact {
   sourceRowIndex: number;
   name: string;
   fields: Record<string, string | number | boolean | null>;
-  customProperties: { propertyNumber: number; value: string | number | boolean | null }[];
+  customProperties: { propertyNumber: number; value: string | number | boolean | number[] | null }[];
   subItems: TransformedSubItem[];
   folderPath?: string;
   tags?: string;

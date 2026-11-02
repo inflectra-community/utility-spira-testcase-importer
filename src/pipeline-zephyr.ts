@@ -389,6 +389,31 @@ export function fuzzyMatchName<T>(
 }
 
 /**
+ * Splits a Zephyr custom-field value into individual values for list resolution.
+ *
+ * Zephyr stores multi-value list fields as a single comma-separated string
+ * (e.g. "DE, HU, CH"). This splits on commas, trims whitespace, and drops empty
+ * entries. A value with no commas yields a single-element array. Non-string
+ * values (numbers, booleans) are returned as a single-element array unchanged.
+ *
+ * Note: list values themselves are assumed not to contain commas. Zephyr list
+ * entries are short codes/labels, so this holds for the data we import.
+ */
+export function splitMultiValue(value: string | number | boolean | number[] | null): string[] {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.map(String);
+  const str = String(value);
+  if (!str.includes(',')) {
+    const trimmed = str.trim();
+    return trimmed === '' ? [] : [trimmed];
+  }
+  return str
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s !== '');
+}
+
+/**
  * Resolves Zephyr name-based values (priority, status, component, custom properties)
  * to Spira numeric IDs using the template metadata.
  *
@@ -483,24 +508,43 @@ export function resolveZephyrMetadata(
           continue;
         }
 
-        // For list types, resolve the value to an ID (fuzzy)
-        if (cpDef.customPropertyTypeId === 6 && cpDef.customListId) {
+        const isList = cpDef.customPropertyTypeId === 6;
+        const isMultiList = cpDef.customPropertyTypeId === 7;
+
+        if ((isList || isMultiList) && cpDef.customListId) {
           const listValues = metadata.customLists.get(cpDef.customListId);
-          const valueMatch = listValues
-            ? fuzzyMatchName(String(cp.value), listValues, v => v.name, v => v.active)
-            : undefined;
-          if (valueMatch) {
-            resolvedCPs.push({
-              propertyNumber: cpDef.propertyNumber,
-              value: valueMatch.customPropertyValueId,
-            });
+          // A single Zephyr field may carry several comma-separated values
+          // (e.g. "DE, HU, CH"). Split and resolve each against the list.
+          const rawValues = splitMultiValue(cp.value);
+
+          const resolvedIds: number[] = [];
+          for (const raw of rawValues) {
+            const valueMatch = listValues
+              ? fuzzyMatchName(raw, listValues, v => v.name, v => v.active)
+              : undefined;
+            if (valueMatch) {
+              resolvedIds.push(valueMatch.customPropertyValueId);
+            } else {
+              warnings.push(`[${meta.key}] Custom property "${cpName}" value "${raw}" not in list`);
+            }
+          }
+
+          if (resolvedIds.length === 0) {
+            // Nothing resolved — fall back to the raw text so the data isn't lost.
+            resolvedCPs.push({ propertyNumber: cpDef.propertyNumber, value: cp.value });
+          } else if (isMultiList) {
+            // Multi-select: store all resolved IDs as an array.
+            resolvedCPs.push({ propertyNumber: cpDef.propertyNumber, value: resolvedIds });
           } else {
-            warnings.push(`[${meta.key}] Custom property "${cpName}" value "${cp.value}" not in list`);
-            // Still store as text fallback if the property allows
-            resolvedCPs.push({
-              propertyNumber: cpDef.propertyNumber,
-              value: cp.value,
-            });
+            // Single-select list with multiple source values: only one fits.
+            resolvedCPs.push({ propertyNumber: cpDef.propertyNumber, value: resolvedIds[0] });
+            if (rawValues.length > 1) {
+              warnings.push(
+                `[${meta.key}] Custom property "${cpName}" is single-select but had ` +
+                `${rawValues.length} values ("${cp.value}"); kept the first. ` +
+                `Make it a multi-select list in Spira to keep all values.`,
+              );
+            }
           }
         } else {
           // Text, integer, etc. — store directly
@@ -589,25 +633,29 @@ export function analyzeZephyrGaps(
     for (const cp of tc.customProperties) {
       const cpName: string | undefined = (cp as any).name;
       if (!cpName) continue;
-      const value = cp.value != null ? String(cp.value).trim() : '';
+      // Split comma-separated multi-values so each is analysed individually.
+      const values = splitMultiValue(cp.value);
 
       const cpDef = fuzzyMatchName(cpName, metadata.customProperties, d => d.name);
       if (!cpDef) {
-        // New property — accumulate its values.
+        // New property — accumulate each of its values.
         if (!newProps.has(cpName)) newProps.set(cpName, new Set());
-        if (value) newProps.get(cpName)!.add(value);
+        for (const v of values) newProps.get(cpName)!.add(v);
         continue;
       }
 
-      // Existing list property — check whether the value is in the list.
-      if (cpDef.customPropertyTypeId === 6 && cpDef.customListId && value) {
+      // Existing list / multi-list property — check each value against the list.
+      const isListType = cpDef.customPropertyTypeId === 6 || cpDef.customPropertyTypeId === 7;
+      if (isListType && cpDef.customListId) {
         const listValues = metadata.customLists.get(cpDef.customListId);
-        const inList = listValues && fuzzyMatchName(value, listValues, v => v.name, v => v.active);
-        if (!inList) {
-          if (!missingByProp.has(cpDef.name)) {
-            missingByProp.set(cpDef.name, { def: cpDef, missing: new Set() });
+        for (const value of values) {
+          const inList = listValues && fuzzyMatchName(value, listValues, v => v.name, v => v.active);
+          if (!inList) {
+            if (!missingByProp.has(cpDef.name)) {
+              missingByProp.set(cpDef.name, { def: cpDef, missing: new Set() });
+            }
+            missingByProp.get(cpDef.name)!.missing.add(value);
           }
-          missingByProp.get(cpDef.name)!.missing.add(value);
         }
       }
     }

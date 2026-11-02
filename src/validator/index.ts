@@ -330,7 +330,7 @@ function validateTestCase(
 function validateCustomPropertyType(
   rowIndex: number,
   propDef: CustomPropertyDefinition,
-  value: string | number | boolean,
+  value: string | number | boolean | number[],
   metadata: TemplateMetadata
 ): ValidationError[] {
   const issues: ValidationError[] = [];
@@ -445,7 +445,13 @@ function validateCustomPropertyType(
       break;
 
     case 6: // List
-      validateListValue(rowIndex, propDef, value, metadata, issues);
+      // Single-select holds one value; if an array slipped through, validate
+      // each element so nothing is silently skipped.
+      if (Array.isArray(value)) {
+        for (const v of value) validateListValue(rowIndex, propDef, v, metadata, issues);
+      } else {
+        validateListValue(rowIndex, propDef, value, metadata, issues);
+      }
       break;
 
     case 7: // MultiList
@@ -568,7 +574,7 @@ function validateListValue(
 function validateMultiListValue(
   rowIndex: number,
   propDef: CustomPropertyDefinition,
-  value: string | number | boolean,
+  value: string | number | boolean | number[],
   metadata: TemplateMetadata,
   issues: ValidationError[]
 ): void {
@@ -597,7 +603,20 @@ function validateMultiListValue(
 
   const activeEntries = listValues.filter((lv) => lv.active);
 
-  if (typeof value === 'number') {
+  if (Array.isArray(value)) {
+    // Resolved ID array (the normal case after Zephyr multi-value resolution).
+    for (const id of value) {
+      const match = activeEntries.find((lv) => lv.customPropertyValueId === id);
+      if (!match) {
+        issues.push({
+          rowIndex,
+          field,
+          message: `Custom property "${propDef.name}" value ID ${id} does not match any active list entry`,
+          severity: 'error',
+        });
+      }
+    }
+  } else if (typeof value === 'number') {
     // Single ID selection
     const match = activeEntries.find(
       (lv) => lv.customPropertyValueId === value

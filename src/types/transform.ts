@@ -12,7 +12,9 @@ export interface TransformedTestStep {
 
 export interface CustomPropertyValue {
   propertyNumber: number; // 1-30 (Spira's custom property slots)
-  value: string | number | boolean | null;
+  // number[] is used for multi-select list properties (Spira type 7), where
+  // each element is a resolved list-value ID.
+  value: string | number | boolean | number[] | null;
 }
 
 export interface TransformedTestCase {

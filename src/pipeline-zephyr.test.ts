@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { fuzzyMatchName, analyzeZephyrGaps } from './pipeline-zephyr.js';
+import { fuzzyMatchName, analyzeZephyrGaps, resolveZephyrMetadata, splitMultiValue } from './pipeline-zephyr.js';
 import type { TransformedTestCase } from './types/transform.js';
 import type { TemplateMetadata } from './types/spira.js';
 
@@ -136,5 +136,126 @@ describe('analyzeZephyrGaps', () => {
     expect(gaps.newProperties).toHaveLength(0);
     expect(gaps.missingListValues).toHaveLength(0);
     expect(gaps.unprovisionableLookups).toHaveLength(0);
+  });
+});
+
+// --- splitMultiValue ---
+
+describe('splitMultiValue', () => {
+  it('splits a comma-separated string and trims each part', () => {
+    expect(splitMultiValue('DE, HU, CH')).toEqual(['DE', 'HU', 'CH']);
+  });
+
+  it('returns a single-element array for a value with no commas', () => {
+    expect(splitMultiValue('DE')).toEqual(['DE']);
+  });
+
+  it('drops empty entries from trailing/double commas', () => {
+    expect(splitMultiValue('DE, , HU,')).toEqual(['DE', 'HU']);
+  });
+
+  it('returns an empty array for null and for an empty/whitespace string', () => {
+    expect(splitMultiValue(null)).toEqual([]);
+    expect(splitMultiValue('   ')).toEqual([]);
+  });
+
+  it('stringifies array and scalar inputs', () => {
+    expect(splitMultiValue([1, 2, 3])).toEqual(['1', '2', '3']);
+    expect(splitMultiValue(42)).toEqual(['42']);
+  });
+});
+
+// --- resolveZephyrMetadata: multi-value list resolution ---
+
+/** Metadata with a multi-select (type 7) "Country Code" backed by a country list. */
+function multiListMetadata(): TemplateMetadata {
+  return metadata({
+    customProperties: [
+      {
+        customPropertyId: 2, propertyNumber: 5, name: 'Country Code',
+        artifactTypeName: 'TestCase', customPropertyTypeId: 7, customPropertyTypeName: 'MultiList',
+        customListId: 20, isRequired: false,
+      },
+    ],
+    customLists: new Map([[20, [
+      { customPropertyValueId: 101, name: 'DE', active: true },
+      { customPropertyValueId: 102, name: 'HU', active: true },
+      { customPropertyValueId: 103, name: 'CH', active: true },
+    ]]]),
+  });
+}
+
+/** Metadata with a single-select (type 6) "Country Code". */
+function singleListMetadata(): TemplateMetadata {
+  return metadata({
+    customProperties: [
+      {
+        customPropertyId: 3, propertyNumber: 5, name: 'Country Code',
+        artifactTypeName: 'TestCase', customPropertyTypeId: 6, customPropertyTypeName: 'List',
+        customListId: 20, isRequired: false,
+      },
+    ],
+    customLists: new Map([[20, [
+      { customPropertyValueId: 101, name: 'DE', active: true },
+      { customPropertyValueId: 102, name: 'HU', active: true },
+      { customPropertyValueId: 103, name: 'CH', active: true },
+    ]]]),
+  });
+}
+
+describe('resolveZephyrMetadata — multi-value custom properties', () => {
+  it('resolves a comma-separated value to an ID array for a multi-select list', () => {
+    const tcs = [zephyrTc('T1', [{ name: 'Country Code', value: 'DE, HU, CH' }])];
+    const warnings = resolveZephyrMetadata(tcs, multiListMetadata());
+
+    expect(warnings).toHaveLength(0);
+    expect(tcs[0].customProperties).toHaveLength(1);
+    expect(tcs[0].customProperties[0]).toEqual({ propertyNumber: 5, value: [101, 102, 103] });
+  });
+
+  it('resolves a single value to a one-element array for a multi-select list', () => {
+    const tcs = [zephyrTc('T1', [{ name: 'Country Code', value: 'HU' }])];
+    resolveZephyrMetadata(tcs, multiListMetadata());
+    expect(tcs[0].customProperties[0]).toEqual({ propertyNumber: 5, value: [102] });
+  });
+
+  it('warns about values not in the list but keeps the ones that resolve', () => {
+    const tcs = [zephyrTc('T1', [{ name: 'Country Code', value: 'DE, ZZ, CH' }])];
+    const warnings = resolveZephyrMetadata(tcs, multiListMetadata());
+
+    expect(tcs[0].customProperties[0]).toEqual({ propertyNumber: 5, value: [101, 103] });
+    expect(warnings.some(w => w.includes('"ZZ" not in list'))).toBe(true);
+  });
+
+  it('for a single-select list with multiple values, keeps the first and warns', () => {
+    const tcs = [zephyrTc('T1', [{ name: 'Country Code', value: 'DE, HU, CH' }])];
+    const warnings = resolveZephyrMetadata(tcs, singleListMetadata());
+
+    expect(tcs[0].customProperties[0]).toEqual({ propertyNumber: 5, value: 101 });
+    expect(warnings.some(w => w.includes('single-select'))).toBe(true);
+  });
+
+  it('falls back to the raw text when nothing resolves', () => {
+    const tcs = [zephyrTc('T1', [{ name: 'Country Code', value: 'XX, YY' }])];
+    resolveZephyrMetadata(tcs, multiListMetadata());
+    expect(tcs[0].customProperties[0]).toEqual({ propertyNumber: 5, value: 'XX, YY' });
+  });
+});
+
+describe('analyzeZephyrGaps — multi-value splitting', () => {
+  it('reports each missing list value separately, not the whole comma string', () => {
+    const tcs = [zephyrTc('T1', [{ name: 'Country Code', value: 'DE, ZZ, CH' }])];
+    const gaps = analyzeZephyrGaps(tcs, multiListMetadata());
+
+    expect(gaps.missingListValues).toHaveLength(1);
+    expect(gaps.missingListValues[0].missingValues).toEqual(['ZZ']);
+  });
+
+  it('splits values for a brand-new multi-value property', () => {
+    // No "Country Code" in this template → treated as a new property.
+    const tcs = [zephyrTc('T1', [{ name: 'Country Code', value: 'DE, HU, CH' }])];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    const prop = gaps.newProperties.find(p => p.name === 'Country Code')!;
+    expect(prop.uniqueValues.sort()).toEqual(['CH', 'DE', 'HU']);
   });
 });
