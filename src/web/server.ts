@@ -22,7 +22,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { loadSettings, saveSettings, isConfigured, maskedSettings, type AppSettings } from './settings.js';
 import { createLogger } from '../logger/index.js';
-import { createSpiraClient } from '../spira/client.js';
+import { createSpiraClient, type SpiraApiClient } from '../spira/client.js';
 import { fetchAllMetadata } from '../spira/metadata.js';
 import { isZephyrBundle, parseZephyrBundle, findZephyrBundles } from '../parser/zephyr-bundle.js';
 import { resolveZephyrMetadata, analyzeZephyrGaps, type ZephyrGapAnalysis } from '../pipeline-zephyr.js';
@@ -85,6 +85,40 @@ function spiraConfigFromSettings(s: AppSettings): SpiraConfig {
   };
 }
 
+/**
+ * Resolves the program/product names for a SpiraProvisioner export.
+ *
+ * The provisioner schema requires the program name to exactly match an
+ * existing Spira program, and the product name must match an existing
+ * product within it — made-up placeholders (the old 'My Program' /
+ * `Project <id>` defaults) silently fail against the real instance. If the
+ * user didn't type a name, ask Spira for the real ones; if that also fails,
+ * surface a clear error instead of guessing.
+ */
+export async function resolveProvisionerNames(
+  client: SpiraApiClient,
+  typedProgramName: string | undefined,
+  typedProductName: string | undefined,
+): Promise<{ programName: string; productName: string }> {
+  const program = typedProgramName?.trim();
+  const product = typedProductName?.trim();
+  if (program && product) return { programName: program, productName: product };
+
+  const info = await client.getProjectInfo();
+
+  const productName = product || info.productName;
+  const programName = program || info.programName;
+
+  if (!programName) {
+    throw new Error(
+      "Couldn't determine the Spira program name automatically (the connected account may lack permission to read it). " +
+      'Enter the exact program name in the "Program name" field and try again.',
+    );
+  }
+
+  return { programName, productName };
+}
+
 export function createServer() {
   const app = express();
   app.use(express.json());
@@ -134,6 +168,19 @@ export function createServer() {
       });
     } catch (err) {
       res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ── Project info (used to pre-fill the provisioner Program/Product names) ─
+  app.get('/api/project-info', async (_req, res) => {
+    const s = loadSettings();
+    if (!isConfigured(s)) { res.json({ ok: false, error: 'Configure Spira settings first.' }); return; }
+    try {
+      const client = createSpiraClient(spiraConfigFromSettings(s), createLogger());
+      const info = await client.getProjectInfo();
+      res.json({ ok: true, ...info });
+    } catch (err) {
+      res.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
   });
 
@@ -460,7 +507,7 @@ export function createServer() {
 
   // ── Excel: export a SpiraProvisioner structure file ─────────────────────────
   // Returns the provisioner JSON plus a human-readable summary of what it adds.
-  app.post('/api/excel/provisioner', (req, res) => {
+  app.post('/api/excel/provisioner', async (req, res) => {
     if (!excelMappingSession) { res.status(400).json({ ok: false, error: 'No Excel mapping in progress.' }); return; }
     const { programName, productName } = req.body as { programName?: string; productName?: string };
     const { sheet, metadata, preAnalysis } = excelMappingSession;
@@ -481,9 +528,19 @@ export function createServer() {
       return;
     }
 
+    let names: { programName: string; productName: string };
+    try {
+      const s = loadSettings();
+      const client = createSpiraClient(spiraConfigFromSettings(s), createLogger());
+      names = await resolveProvisionerNames(client, programName, productName);
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
     const config = generateProvisionerConfig({
-      programName: programName?.trim() || 'My Program',
-      productName: productName?.trim() || (metadata.projectId ? `Project ${metadata.projectId}` : 'My Product'),
+      programName: names.programName,
+      productName: names.productName,
       newColumns,
       missingValues,
     });
@@ -518,7 +575,7 @@ export function createServer() {
   // ── Zephyr: export a SpiraProvisioner structure file ────────────────────────
   // Uses the gaps collected during parse (new custom properties + missing list
   // values). Reuses the same generateProvisionerConfig/inferFieldType as Excel.
-  app.post('/api/zephyr/provisioner', (req, res) => {
+  app.post('/api/zephyr/provisioner', async (req, res) => {
     const session = currentSession;
     if (!session || session.format !== 'zephyr' || !session.zephyrGaps) {
       res.status(400).json({ ok: false, error: 'No Zephyr bundle parsed.' });
@@ -544,9 +601,19 @@ export function createServer() {
       missingValues: m.missingValues,
     }));
 
+    let names: { programName: string; productName: string };
+    try {
+      const s = loadSettings();
+      const client = createSpiraClient(spiraConfigFromSettings(s), createLogger());
+      names = await resolveProvisionerNames(client, programName, productName);
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
     const config = generateProvisionerConfig({
-      programName: programName?.trim() || 'My Program',
-      productName: productName?.trim() || (session.metadata.projectId ? `Project ${session.metadata.projectId}` : 'My Product'),
+      programName: names.programName,
+      productName: names.productName,
       newColumns,
       missingValues,
     });

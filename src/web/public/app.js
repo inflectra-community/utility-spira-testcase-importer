@@ -20,9 +20,30 @@ document.querySelectorAll('nav button').forEach((btn) => {
     btn.classList.add('active');
     $('tab-settings').classList.toggle('hidden', btn.dataset.tab !== 'settings');
     $('tab-import').classList.toggle('hidden', btn.dataset.tab !== 'import');
-    if (btn.dataset.tab === 'import') refreshFiles();
+    if (btn.dataset.tab === 'import') { refreshFiles(); prefillProvisionerNames(); }
   });
 });
+
+// Pre-fills the Program/Product name fields from the connected Spira project,
+// so the provisioner export targets a real program/product instead of a
+// made-up placeholder that silently fails. Only fills blank fields — it
+// won't overwrite something the user already typed.
+async function prefillProvisionerNames() {
+  try {
+    const info = await api.get('/api/project-info');
+    if (!info.ok) return;
+    for (const id of ['provProgram', 'zProvProgram']) {
+      const el = $(id);
+      if (el && !el.value.trim() && info.programName) el.value = info.programName;
+    }
+    for (const id of ['provProduct', 'zProvProduct']) {
+      const el = $(id);
+      if (el && !el.value.trim() && info.productName) el.value = info.productName;
+    }
+  } catch {
+    // Best-effort — leave the fields blank/placeholder if this fails.
+  }
+}
 
 function setStatus(el, kind, msg) {
   el.innerHTML = `<div class="status ${kind}">${msg}</div>`;

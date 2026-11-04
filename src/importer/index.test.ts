@@ -14,6 +14,7 @@ import type { TransformedTestCase } from '../types/transform.js';
 function createMockClient(overrides?: Partial<SpiraApiClient>): SpiraApiClient {
   return {
     authenticate: vi.fn().mockResolvedValue(undefined),
+    getProjectInfo: vi.fn().mockResolvedValue({ productName: 'Product', programName: 'Program' }),
     getCustomProperties: vi.fn().mockResolvedValue([]),
     getCustomListValues: vi.fn().mockResolvedValue([]),
     getTestCasePriorities: vi.fn().mockResolvedValue([]),

@@ -32,6 +32,7 @@ import type {
  * Response from the Spira project endpoint used for authentication validation.
  */
 interface ProjectResponse {
+  ProjectGroupId?: number;
   ProjectId: number;
   Name: string;
   ProjectTemplateId: number;
@@ -58,6 +59,8 @@ export class SpiraApiError extends Error {
  */
 export interface SpiraApiClient {
   authenticate(): Promise<void>;
+  /** Product (project) name and its program name, as Spira knows them. */
+  getProjectInfo(): Promise<{ productName: string; programName?: string }>;
   getCustomProperties(artifactTypeName: string): Promise<CustomPropertyDefinition[]>;
   getCustomListValues(customListId: number): Promise<CustomListValue[]>;
   getTestCasePriorities(): Promise<TestCasePriority[]>;
@@ -256,6 +259,25 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
 
     templateId = project.ProjectTemplateId;
     logger.info(`Successfully authenticated. Project: "${project.Name}" (ID: ${project.ProjectId}, Template: ${templateId})`);
+  }
+
+  /**
+   * Returns the product name and the name of the program it belongs to.
+   * The program lookup is best-effort: some accounts can't read /programs,
+   * in which case only the product name is returned.
+   */
+  async function getProjectInfo(): Promise<{ productName: string; programName?: string }> {
+    const project = await request<ProjectResponse>('GET', `/projects/${config.projectId}`);
+    let programName: string | undefined;
+    if (project.ProjectGroupId) {
+      try {
+        const program = await request<{ Name?: string }>('GET', `/programs/${project.ProjectGroupId}`);
+        programName = program?.Name;
+      } catch {
+        logger.warn('Could not read the program name from Spira; it must be entered manually.');
+      }
+    }
+    return { productName: project.Name, programName };
   }
 
   /**
@@ -499,6 +521,7 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
 
   return {
     authenticate,
+    getProjectInfo,
     getCustomProperties,
     getCustomListValues,
     getTestCasePriorities,
