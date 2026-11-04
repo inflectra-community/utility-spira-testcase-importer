@@ -20,30 +20,9 @@ document.querySelectorAll('nav button').forEach((btn) => {
     btn.classList.add('active');
     $('tab-settings').classList.toggle('hidden', btn.dataset.tab !== 'settings');
     $('tab-import').classList.toggle('hidden', btn.dataset.tab !== 'import');
-    if (btn.dataset.tab === 'import') { refreshFiles(); prefillProvisionerNames(); }
+    if (btn.dataset.tab === 'import') refreshFiles();
   });
 });
-
-// Pre-fills the Program/Product name fields from the connected Spira project,
-// so the provisioner export targets a real program/product instead of a
-// made-up placeholder that silently fails. Only fills blank fields — it
-// won't overwrite something the user already typed.
-async function prefillProvisionerNames() {
-  try {
-    const info = await api.get('/api/project-info');
-    if (!info.ok) return;
-    for (const id of ['provProgram', 'zProvProgram']) {
-      const el = $(id);
-      if (el && !el.value.trim() && info.programName) el.value = info.programName;
-    }
-    for (const id of ['provProduct', 'zProvProduct']) {
-      const el = $(id);
-      if (el && !el.value.trim() && info.productName) el.value = info.productName;
-    }
-  } catch {
-    // Best-effort — leave the fields blank/placeholder if this fails.
-  }
-}
 
 function setStatus(el, kind, msg) {
   el.innerHTML = `<div class="status ${kind}">${msg}</div>`;
@@ -282,13 +261,12 @@ $('feedbackSubmit').addEventListener('click', async () => {
 $('provisionerBtn').addEventListener('click', () => $('provisionerBox').classList.toggle('hidden'));
 
 // Shared provisioner generate+download+summary, used by both Excel and Zephyr.
-async function generateProvisioner(endpoint, programId, productId, resultId) {
+// The program/product names aren't asked for: the importer is already bound to
+// one Spira product, and the server reads the real names from it.
+async function generateProvisioner(endpoint, resultId) {
   const resultEl = $(resultId);
   resultEl.innerHTML = '<div class="status warn">Generating…</div>';
-  const r = await api.post(endpoint, {
-    programName: $(programId).value.trim(),
-    productName: $(productId).value.trim(),
-  });
+  const r = await api.post(endpoint, {});
   if (!r.ok) { resultEl.innerHTML = `<div class="status err">${escapeHtml(r.error || 'Failed.')}</div>`; return; }
   if (r.empty) { resultEl.innerHTML = `<div class="status ok">${escapeHtml(r.message)}</div>`; return; }
 
@@ -333,10 +311,10 @@ async function generateProvisioner(endpoint, programId, productId, resultId) {
 }
 
 $('provGenerate').addEventListener('click', () =>
-  generateProvisioner('/api/excel/provisioner', 'provProgram', 'provProduct', 'provResult'));
+  generateProvisioner('/api/excel/provisioner', 'provResult'));
 
 $('zProvGenerate').addEventListener('click', () =>
-  generateProvisioner('/api/zephyr/provisioner', 'zProvProgram', 'zProvProduct', 'zProvResult'));
+  generateProvisioner('/api/zephyr/provisioner', 'zProvResult'));
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
@@ -515,8 +493,6 @@ function resetImport() {
   $('feedbackText').value = '';
   $('feedbackBox').classList.add('hidden');
   $('zProvResult').innerHTML = '';
-  $('zProvProgram').value = '';
-  $('zProvProduct').value = '';
   $('resultSummary').innerHTML = '';
   $('log').textContent = '';
   $('progressBar').style.width = '0';

@@ -88,31 +88,20 @@ function spiraConfigFromSettings(s: AppSettings): SpiraConfig {
 /**
  * Resolves the program/product names for a SpiraProvisioner export.
  *
- * The provisioner schema requires the program name to exactly match an
- * existing Spira program, and the product name must match an existing
- * product within it — made-up placeholders (the old 'My Program' /
- * `Project <id>` defaults) silently fail against the real instance. If the
- * user didn't type a name, ask Spira for the real ones; if that also fails,
- * surface a clear error instead of guessing.
+ * The importer is bound to a single Spira product (via Settings), so the
+ * names are read from Spira rather than typed. The provisioner schema needs
+ * the program name to match an existing program exactly, so we never guess:
+ * if the program can't be read, fail with a clear error.
  */
 export async function resolveProvisionerNames(
   client: SpiraApiClient,
-  typedProgramName: string | undefined,
-  typedProductName: string | undefined,
 ): Promise<{ programName: string; productName: string }> {
-  const program = typedProgramName?.trim();
-  const product = typedProductName?.trim();
-  if (program && product) return { programName: program, productName: product };
-
-  const info = await client.getProjectInfo();
-
-  const productName = product || info.productName;
-  const programName = program || info.programName;
+  const { productName, programName } = await client.getProjectInfo();
 
   if (!programName) {
     throw new Error(
-      "Couldn't determine the Spira program name automatically (the connected account may lack permission to read it). " +
-      'Enter the exact program name in the "Program name" field and try again.',
+      "Couldn't read the program name for this product from Spira. " +
+      'The connected account may not have permission to view programs.',
     );
   }
 
@@ -168,19 +157,6 @@ export function createServer() {
       });
     } catch (err) {
       res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
-    }
-  });
-
-  // ── Project info (used to pre-fill the provisioner Program/Product names) ─
-  app.get('/api/project-info', async (_req, res) => {
-    const s = loadSettings();
-    if (!isConfigured(s)) { res.json({ ok: false, error: 'Configure Spira settings first.' }); return; }
-    try {
-      const client = createSpiraClient(spiraConfigFromSettings(s), createLogger());
-      const info = await client.getProjectInfo();
-      res.json({ ok: true, ...info });
-    } catch (err) {
-      res.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
   });
 
@@ -509,7 +485,6 @@ export function createServer() {
   // Returns the provisioner JSON plus a human-readable summary of what it adds.
   app.post('/api/excel/provisioner', async (req, res) => {
     if (!excelMappingSession) { res.status(400).json({ ok: false, error: 'No Excel mapping in progress.' }); return; }
-    const { programName, productName } = req.body as { programName?: string; productName?: string };
     const { sheet, metadata, preAnalysis } = excelMappingSession;
 
     // New columns the heuristics/LLM couldn't map to anything in the template.
@@ -532,7 +507,7 @@ export function createServer() {
     try {
       const s = loadSettings();
       const client = createSpiraClient(spiraConfigFromSettings(s), createLogger());
-      names = await resolveProvisionerNames(client, programName, productName);
+      names = await resolveProvisionerNames(client);
     } catch (err) {
       res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
       return;
@@ -581,7 +556,6 @@ export function createServer() {
       res.status(400).json({ ok: false, error: 'No Zephyr bundle parsed.' });
       return;
     }
-    const { programName, productName } = req.body as { programName?: string; productName?: string };
     const gaps = session.zephyrGaps;
 
     if (gaps.newProperties.length === 0 && gaps.missingListValues.length === 0) {
@@ -605,7 +579,7 @@ export function createServer() {
     try {
       const s = loadSettings();
       const client = createSpiraClient(spiraConfigFromSettings(s), createLogger());
-      names = await resolveProvisionerNames(client, programName, productName);
+      names = await resolveProvisionerNames(client);
     } catch (err) {
       res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
       return;

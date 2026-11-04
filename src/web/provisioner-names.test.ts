@@ -1,9 +1,9 @@
 /**
  * Tests for resolveProvisionerNames.
  *
- * The SpiraProvisioner schema requires the program name to match an existing
- * program exactly, so the export must never fabricate a name. It uses what the
- * user typed, otherwise what Spira reports, otherwise fails loudly.
+ * The importer is bound to one Spira product, and the SpiraProvisioner schema
+ * requires the program name to match an existing program exactly. So the names
+ * come from Spira, and the export must never fabricate one.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -15,33 +15,20 @@ function clientReturning(info: { productName: string; programName?: string }) {
 }
 
 describe('resolveProvisionerNames', () => {
-  it('uses typed names as-is without calling Spira', async () => {
-    const client = clientReturning({ productName: 'From Spira', programName: 'Spira Program' });
-    const r = await resolveProvisionerNames(client, ' My Program ', ' My Product ');
-    expect(r).toEqual({ programName: 'My Program', productName: 'My Product' });
-    expect(client.getProjectInfo).not.toHaveBeenCalled();
-  });
-
-  it('fills both names from Spira when the fields are blank', async () => {
+  it('returns the program and product names reported by Spira', async () => {
     const client = clientReturning({ productName: 'Real Product', programName: 'Real Program' });
-    const r = await resolveProvisionerNames(client, '', undefined);
+    const r = await resolveProvisionerNames(client);
     expect(r).toEqual({ programName: 'Real Program', productName: 'Real Product' });
-  });
-
-  it('fills only the blank field, keeping what the user typed', async () => {
-    const client = clientReturning({ productName: 'Real Product', programName: 'Real Program' });
-    const r = await resolveProvisionerNames(client, 'Typed Program', '');
-    expect(r).toEqual({ programName: 'Typed Program', productName: 'Real Product' });
+    expect(client.getProjectInfo).toHaveBeenCalledTimes(1);
   });
 
   it('throws a clear error rather than inventing a program name', async () => {
-    const client = clientReturning({ productName: 'Real Product' }); // no program readable
-    await expect(resolveProvisionerNames(client, '', '')).rejects.toThrow(/program name/i);
+    const client = clientReturning({ productName: 'Real Product' }); // program not readable
+    await expect(resolveProvisionerNames(client)).rejects.toThrow(/program name/i);
   });
 
-  it('succeeds without a Spira lookup result for the program if the user typed it', async () => {
-    const client = clientReturning({ productName: 'Real Product' });
-    const r = await resolveProvisionerNames(client, 'Typed Program', '');
-    expect(r).toEqual({ programName: 'Typed Program', productName: 'Real Product' });
+  it('propagates Spira lookup failures', async () => {
+    const client = { getProjectInfo: vi.fn().mockRejectedValue(new Error('401')) } as unknown as SpiraApiClient;
+    await expect(resolveProvisionerNames(client)).rejects.toThrow('401');
   });
 });
