@@ -109,6 +109,65 @@ describe('generateProvisionerConfig', () => {
     expect(field.type).toBe('list');
     expect(field.values).toEqual(['VA01', 'VL10B']); // existing + missing, sorted, deduped
   });
+
+  it('exports an existing field as multilist when it is flagged multiValued', () => {
+    const config = generateProvisionerConfig({
+      programName: 'Prog',
+      productName: 'Prod',
+      newColumns: [],
+      missingValues: [
+        { propertyName: 'Country', existingValues: ['DE'], missingValues: ['HU', 'CH'], multiValued: true },
+      ],
+    }) as any;
+
+    const field = config.program.products[0].customFields.testCases.find((f: any) => f.name === 'Country');
+    expect(field.type).toBe('multilist');
+    expect(field.values).toEqual(['CH', 'DE', 'HU']);
+  });
+
+  it('keeps an existing field as a single-select list when multiValued is false or absent', () => {
+    const config = generateProvisionerConfig({
+      programName: 'Prog',
+      productName: 'Prod',
+      newColumns: [],
+      missingValues: [
+        { propertyName: 'A', existingValues: [], missingValues: ['x'], multiValued: false },
+        { propertyName: 'B', existingValues: [], missingValues: ['y'] },
+      ],
+    }) as any;
+
+    const fields = config.program.products[0].customFields.testCases;
+    expect(fields.find((f: any) => f.name === 'A').type).toBe('list');
+    expect(fields.find((f: any) => f.name === 'B').type).toBe('list');
+  });
+
+  it('exports a new list-like column as multilist when multiValued', () => {
+    const config = generateProvisionerConfig({
+      programName: 'Prog',
+      productName: 'Prod',
+      newColumns: [
+        // Few distinct, repeated values → inferred as a list.
+        { columnName: 'Region', uniqueValues: ['EMEA', 'APAC'], rowCount: 20, multiValued: true },
+      ],
+      missingValues: [],
+    }) as any;
+
+    const field = config.program.products[0].customFields.testCases.find((f: any) => f.name === 'Region');
+    expect(field.type).toBe('multilist');
+    expect(field.values).toEqual(['APAC', 'EMEA']);
+  });
+
+  it('does not turn a non-list column (e.g. integer) into multilist just because multiValued', () => {
+    const config = generateProvisionerConfig({
+      programName: 'Prog',
+      productName: 'Prod',
+      newColumns: [{ columnName: 'Qty', uniqueValues: ['1', '2'], rowCount: 10, multiValued: true }],
+      missingValues: [],
+    }) as any;
+
+    const field = config.program.products[0].customFields.testCases.find((f: any) => f.name === 'Qty');
+    expect(field.type).toBe('integer');
+  });
 });
 
 describe('extractColumnInfo', () => {

@@ -577,6 +577,12 @@ export interface ZephyrNewProperty {
   uniqueValues: string[];
   /** How many test cases carried a value for this property */
   rowCount: number;
+  /**
+   * True if any source row held more than one value for this property
+   * (a comma-separated string, e.g. "DE, HU, CH"). Signals the field should
+   * be provisioned as a multi-select list rather than single-select.
+   */
+  multiValued: boolean;
 }
 
 /**
@@ -587,6 +593,8 @@ export interface ZephyrMissingListValues {
   propertyName: string;
   existingValues: string[];
   missingValues: string[];
+  /** True if any source row held more than one value for this property. */
+  multiValued: boolean;
 }
 
 export interface ZephyrGapAnalysis {
@@ -619,6 +627,8 @@ export function analyzeZephyrGaps(
 ): ZephyrGapAnalysis {
   // Accumulate, per unmatched CP name, the set of values seen.
   const newProps = new Map<string, Set<string>>();
+  // Tracks whether ANY row's raw value for a property name was comma-separated.
+  const multiValuedProps = new Set<string>();
   // Per existing list CP name, the set of values seen that aren't in the list.
   const missingByProp = new Map<string, { def: typeof metadata.customProperties[number]; missing: Set<string> }>();
   const missingComponents = new Set<string>();
@@ -647,6 +657,13 @@ export function analyzeZephyrGaps(
       const values = splitMultiValue(cp.value);
 
       const cpDef = fuzzyMatchName(cpName, metadata.customProperties, d => d.name);
+
+      // Key by the matched Spira field name (e.g. source "Country Code" → Spira
+      // "Country") so the flag lines up with how gaps are reported below.
+      const propKey = cpDef ? cpDef.name : cpName;
+      if (values.length > 1) multiValuedProps.add(propKey);
+      // A field that's already multi-select in the template stays multi-select.
+      if (cpDef?.customPropertyTypeId === 7) multiValuedProps.add(propKey);
       if (!cpDef) {
         // New property — accumulate each of its values.
         if (!newProps.has(cpName)) newProps.set(cpName, new Set());
@@ -675,6 +692,7 @@ export function analyzeZephyrGaps(
     name,
     uniqueValues: [...values],
     rowCount: values.size,
+    multiValued: multiValuedProps.has(name),
   }));
 
   const missingListValues: ZephyrMissingListValues[] = [...missingByProp.values()].map(({ def, missing }) => {
@@ -683,6 +701,7 @@ export function analyzeZephyrGaps(
       propertyName: def.name,
       existingValues: listValues.map(v => v.name),
       missingValues: [...missing],
+      multiValued: multiValuedProps.has(def.name),
     };
   });
 

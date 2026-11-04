@@ -267,6 +267,58 @@ describe('resolveZephyrMetadata — multi-value custom properties', () => {
   });
 });
 
+describe('analyzeZephyrGaps — multiValued flag', () => {
+  it('flags an existing field multiValued when any row has a comma-separated value, keyed by the Spira field name', () => {
+    // Source says "Country Code"; the Spira field is "Country" — flag must land on "Country".
+    const md = metadata({
+      customProperties: [{
+        customPropertyId: 3, propertyNumber: 5, name: 'Country',
+        artifactTypeName: 'TestCase', customPropertyTypeId: 6, customPropertyTypeName: 'List',
+        customListId: 20, isRequired: false,
+      }],
+      customLists: new Map([[20, [{ customPropertyValueId: 101, name: 'DE', active: true }]]]),
+    });
+    const tcs = [
+      zephyrTc('T1', [{ name: 'Country Code', value: 'DE' }]),
+      zephyrTc('T2', [{ name: 'Country Code', value: 'HU, CH' }]),
+    ];
+    const gaps = analyzeZephyrGaps(tcs, md);
+    const country = gaps.missingListValues.find(m => m.propertyName === 'Country')!;
+    expect(country.missingValues.sort()).toEqual(['CH', 'HU']);
+    expect(country.multiValued).toBe(true);
+  });
+
+  it('leaves multiValued false when every row holds a single value', () => {
+    const tcs = [
+      zephyrTc('T1', [{ name: 'Transaction Code', value: 'VL10B' }]),
+      zephyrTc('T2', [{ name: 'Transaction Code', value: 'FB03/MIGO' }]), // slash is NOT a separator
+    ];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    const tx = gaps.missingListValues.find(m => m.propertyName === 'Transaction Code')!;
+    expect(tx.multiValued).toBe(false);
+  });
+
+  it('keeps a field multiValued when the template field is already multi-select (type 7)', () => {
+    const md = metadata({
+      customProperties: [{
+        customPropertyId: 4, propertyNumber: 1, name: 'Transaction Code',
+        artifactTypeName: 'TestCase', customPropertyTypeId: 7, customPropertyTypeName: 'MultiList',
+        customListId: 10, isRequired: false,
+      }],
+    });
+    // Single-valued data, but the template field is already multi-select.
+    const tcs = [zephyrTc('T1', [{ name: 'Transaction Code', value: 'VL10B' }])];
+    const gaps = analyzeZephyrGaps(tcs, md);
+    expect(gaps.missingListValues[0].multiValued).toBe(true);
+  });
+
+  it('flags a brand-new property multiValued from comma-separated data', () => {
+    const tcs = [zephyrTc('T1', [{ name: 'Region', value: 'EMEA, APAC' }])];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    expect(gaps.newProperties.find(p => p.name === 'Region')!.multiValued).toBe(true);
+  });
+});
+
 describe('analyzeZephyrGaps — multi-value splitting', () => {
   it('reports each missing list value separately, not the whole comma string', () => {
     const tcs = [zephyrTc('T1', [{ name: 'Country Code', value: 'DE, ZZ, CH' }])];

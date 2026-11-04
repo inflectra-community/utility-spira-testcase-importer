@@ -263,10 +263,10 @@ $('provisionerBtn').addEventListener('click', () => $('provisionerBox').classLis
 // Shared provisioner generate+download+summary, used by both Excel and Zephyr.
 // The program/product names aren't asked for: the importer is already bound to
 // one Spira product, and the server reads the real names from it.
-async function generateProvisioner(endpoint, resultId) {
+async function generateProvisioner(endpoint, resultId, body) {
   const resultEl = $(resultId);
   resultEl.innerHTML = '<div class="status warn">Generating…</div>';
-  const r = await api.post(endpoint, {});
+  const r = await api.post(endpoint, body || {});
   if (!r.ok) { resultEl.innerHTML = `<div class="status err">${escapeHtml(r.error || 'Failed.')}</div>`; return; }
   if (r.empty) { resultEl.innerHTML = `<div class="status ok">${escapeHtml(r.message)}</div>`; return; }
 
@@ -288,9 +288,9 @@ async function generateProvisioner(endpoint, resultId) {
   }
   if (r.missingValues && r.missingValues.length) {
     html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">List values to add</h3>' +
-      '<table><thead><tr><th>Property</th><th>Values added</th><th>Sample</th></tr></thead><tbody>' +
+      '<table><thead><tr><th>Property</th><th>Type</th><th>Values added</th><th>Sample</th></tr></thead><tbody>' +
       r.missingValues.map((m) =>
-        `<tr><td>${escapeHtml(m.property)}</td><td>${m.added}</td><td>${escapeHtml(m.sample.join(', '))}</td></tr>`).join('') +
+        `<tr><td>${escapeHtml(m.property)}</td><td>${escapeHtml(m.type || 'list')}</td><td>${m.added}</td><td>${escapeHtml(m.sample.join(', '))}</td></tr>`).join('') +
       '</tbody></table>';
   }
   // Guidance: the list-vs-text type is inferred from the values seen, which can
@@ -313,8 +313,13 @@ async function generateProvisioner(endpoint, resultId) {
 $('provGenerate').addEventListener('click', () =>
   generateProvisioner('/api/excel/provisioner', 'provResult'));
 
-$('zProvGenerate').addEventListener('click', () =>
-  generateProvisioner('/api/zephyr/provisioner', 'zProvResult'));
+$('zProvGenerate').addEventListener('click', () => {
+  // Fields whose "Multi-select" box is ticked are exported as `multilist`.
+  const multiSelect = [...document.querySelectorAll('.zMulti')]
+    .filter((cb) => cb.checked)
+    .map((cb) => cb.dataset.field);
+  return generateProvisioner('/api/zephyr/provisioner', 'zProvResult', { multiSelect });
+});
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
@@ -327,6 +332,21 @@ function renderPlan(plan, opts) {
   const zp = $('zephyrProvisioner');
   if (opts.hasGaps) { zp.classList.remove('hidden'); }
   else { zp.classList.add('hidden'); $('zProvResult').innerHTML = ''; }
+
+  // Per-field list-vs-multi-select choice for the export. Defaults come from the
+  // data (comma-separated values) or from the template (already multi-select).
+  const fields = plan.provisionerFields || [];
+  $('zProvFields').innerHTML = fields.length
+    ? '<table><thead><tr><th>Field</th><th>Values to add</th><th>Multi-select</th></tr></thead><tbody>' +
+      fields.map((f) =>
+        `<tr><td>${escapeHtml(f.name)}${f.kind === 'new' ? ' <span class="muted">(new)</span>' : ''}</td>` +
+        `<td>${f.valueCount}</td>` +
+        `<td><input type="checkbox" class="zMulti" data-field="${escapeAttr(f.name)}"${f.multiValued ? ' checked' : ''} ` +
+        `aria-label="Make ${escapeAttr(f.name)} a multi-select list" /></td></tr>`).join('') +
+      '</tbody></table>' +
+      '<p class="muted" style="margin-top:6px;">Tick <em>Multi-select</em> for fields where a test case can have several values ' +
+      '(pre-ticked when this source has comma-separated values).</p>'
+    : '';
 
   const vKind = plan.validationErrors > 0 ? 'err' : 'ok';
   const extras = [];
@@ -493,6 +513,7 @@ function resetImport() {
   $('feedbackText').value = '';
   $('feedbackBox').classList.add('hidden');
   $('zProvResult').innerHTML = '';
+  $('zProvFields').innerHTML = '';
   $('resultSummary').innerHTML = '';
   $('log').textContent = '';
   $('progressBar').style.width = '0';

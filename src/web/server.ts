@@ -354,6 +354,22 @@ export function createServer() {
         format: 'zephyr',
         hasGaps,
         plan: {
+          // Fields the export would provision, with the data-driven multi-select default,
+          // so the UI can offer a per-field "Multi-select" choice before generating.
+          provisionerFields: [
+            ...gaps.missingListValues.map(m => ({
+              name: m.propertyName,
+              kind: 'existing' as const,
+              valueCount: m.missingValues.length,
+              multiValued: m.multiValued,
+            })),
+            ...gaps.newProperties.map(p => ({
+              name: p.name,
+              kind: 'new' as const,
+              valueCount: p.uniqueValues.length,
+              multiValued: p.multiValued,
+            })),
+          ],
           testCaseCount: bundle.testCases.length,
           stepCount: bundle.testCases.reduce((n, tc) => n + tc.testSteps.length, 0),
           inlineImages: bundle.pendingAttachments.length,
@@ -564,15 +580,23 @@ export function createServer() {
     }
 
     // Adapt Zephyr gaps to the provisioner module's input shapes.
+    // The user can override list-vs-multilist per field via checkboxes. When no
+    // override list is sent, fall back to what the data (and template) indicate.
+    const { multiSelect } = (req.body ?? {}) as { multiSelect?: string[] };
+    const isMulti = (name: string, dataDefault: boolean) =>
+      Array.isArray(multiSelect) ? multiSelect.includes(name) : dataDefault;
+
     const newColumns = gaps.newProperties.map(p => ({
       columnName: p.name,
       uniqueValues: p.uniqueValues,
       rowCount: p.rowCount,
+      multiValued: isMulti(p.name, p.multiValued),
     }));
     const missingValues = gaps.missingListValues.map(m => ({
       propertyName: m.propertyName,
       existingValues: m.existingValues,
       missingValues: m.missingValues,
+      multiValued: isMulti(m.propertyName, m.multiValued),
     }));
 
     let names: { programName: string; productName: string };
@@ -593,11 +617,13 @@ export function createServer() {
     });
 
     const newFieldSummary = newColumns.map(col => {
-      const { type, variabilityScore } = inferFieldType(col, 20);
+      const { type: inferred, variabilityScore } = inferFieldType(col, 20);
+      const type = inferred === 'list' && col.multiValued ? 'multilist' : inferred;
       return { name: col.columnName, type, variability: Math.round(variabilityScore * 100), uniqueValues: col.uniqueValues.length };
     });
     const missingValueSummary = missingValues.map(mv => ({
       property: mv.propertyName,
+      type: mv.multiValued ? 'multilist' : 'list',
       added: mv.missingValues.length,
       sample: mv.missingValues.slice(0, 8),
     }));

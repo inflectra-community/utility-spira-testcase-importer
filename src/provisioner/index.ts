@@ -27,6 +27,11 @@ export interface UnmatchedColumnInfo {
   uniqueValues: string[];
   /** Total number of non-empty rows for this column */
   rowCount: number;
+  /**
+   * True if this field should be a multi-select list (`multilist`) rather than
+   * a single-select `list`. Only affects columns inferred to be lists.
+   */
+  multiValued?: boolean;
 }
 
 /**
@@ -39,6 +44,11 @@ export interface MissingListValues {
   missingValues: string[];
   /** Values already in the Spira list (for reference) */
   existingValues: string[];
+  /**
+   * True if this field should be exported as a multi-select list (`multilist`)
+   * rather than a single-select `list`.
+   */
+  multiValued?: boolean;
 }
 
 /**
@@ -151,9 +161,11 @@ export function generateProvisionerConfig(config: ProvisionerExportConfig): Reco
 
   // New custom properties
   for (const column of config.newColumns) {
-    const { type, values, variabilityScore } = inferFieldType(column, threshold);
+    const inferred = inferFieldType(column, threshold);
+    // A column inferred as a list becomes a multi-select if it holds multiple values per item.
+    const type = inferred.type === 'list' && column.multiValued ? 'multilist' : inferred.type;
     const field: Record<string, unknown> = { name: column.columnName, type };
-    if (values) field.values = values;
+    if (inferred.values) field.values = inferred.values;
     customFields.push(field);
   }
 
@@ -163,7 +175,7 @@ export function generateProvisionerConfig(config: ProvisionerExportConfig): Reco
     const allValues = [...new Set([...mv.existingValues, ...mv.missingValues])].sort();
     customFields.push({
       name: mv.propertyName,
-      type: 'list',
+      type: mv.multiValued ? 'multilist' : 'list',
       values: allValues,
     });
   }
