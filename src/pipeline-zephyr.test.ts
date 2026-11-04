@@ -112,11 +112,35 @@ describe('analyzeZephyrGaps', () => {
     expect(gaps.missingListValues).toHaveLength(0);
   });
 
-  it('flags unmatched priority/status/component as unprovisionable', () => {
-    const tcs = [zephyrTc('T1', [], { priority: 'Blocker', component: 'XYZ' })];
+  it('flags an unmatched priority as unprovisionable', () => {
+    const tcs = [zephyrTc('T1', [], { priority: 'Blocker' })];
     const gaps = analyzeZephyrGaps(tcs, metadata());
     expect(gaps.unprovisionableLookups).toContain('Priority: Blocker');
-    expect(gaps.unprovisionableLookups).toContain('Component: XYZ');
+  });
+
+  it('surfaces an unmatched component in its own missingComponents bucket (not unprovisionable)', () => {
+    const tcs = [zephyrTc('T1', [], { component: 'XYZ' })];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    expect(gaps.missingComponents).toContain('XYZ');
+    // It must NOT be lumped into the generic unprovisionable list anymore.
+    expect(gaps.unprovisionableLookups.some(u => u.includes('XYZ'))).toBe(false);
+  });
+
+  it('deduplicates repeated missing components across test cases', () => {
+    const tcs = [
+      zephyrTc('T1', [], { component: 'CO' }),
+      zephyrTc('T2', [], { component: 'CO' }),
+      zephyrTc('T3', [], { component: 'PM' }),
+    ];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    expect(gaps.missingComponents.sort()).toEqual(['CO', 'PM']);
+  });
+
+  it('does not flag a component that exists in the Spira Components field', () => {
+    // metadata() has component "SD".
+    const tcs = [zephyrTc('T1', [], { component: 'SD' })];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    expect(gaps.missingComponents).toHaveLength(0);
   });
 
   it('accumulates distinct values for a new property across test cases', () => {
@@ -135,6 +159,7 @@ describe('analyzeZephyrGaps', () => {
     const gaps = analyzeZephyrGaps(tcs, metadata());
     expect(gaps.newProperties).toHaveLength(0);
     expect(gaps.missingListValues).toHaveLength(0);
+    expect(gaps.missingComponents).toHaveLength(0);
     expect(gaps.unprovisionableLookups).toHaveLength(0);
   });
 });

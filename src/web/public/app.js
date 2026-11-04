@@ -340,6 +340,17 @@ function renderPlan(plan, opts) {
     (plan.warnings && plan.warnings.length ? `<br><span class="muted">${plan.warnings.length} resolution warning(s)</span>` : '') +
     `</div>`;
 
+  // Missing components can't be auto-provisioned — the admin must add them to
+  // the Spira Components field manually. Call this out prominently.
+  if (plan.missingComponents && plan.missingComponents.length) {
+    $('planSummary').innerHTML +=
+      `<div class="status warn" style="margin-top:8px;">` +
+      `<strong>${plan.missingComponents.length} component(s) aren't in this product's Components list:</strong> ` +
+      `${plan.missingComponents.map(escapeHtml).join(', ')}.<br>` +
+      `<span class="muted">Components can't be provisioned via the structure file — add them under ` +
+      `Administration → Components in Spira, then re-parse so they resolve.</span></div>`;
+  }
+
   // A bundle may define several test sets (one per Zephyr cycle). Fall back to
   // the single `testSet` for older server responses.
   const testSets = plan.testSets || (plan.testSet ? [plan.testSet] : []);

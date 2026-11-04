@@ -349,6 +349,9 @@ export function createServer() {
             members: resolvableMembers(ts),
             skipped: ts.memberKeys.length - resolvableMembers(ts).length,
           })),
+          // Components the source uses that aren't in the Spira Components field.
+          // These must be added manually (not provisionable), so flag them here.
+          missingComponents: gaps.missingComponents,
           // Back-compat for any older client code reading a single testSet.
           testSet: bundle.testSet
             ? {
@@ -565,6 +568,7 @@ export function createServer() {
       filename: `spira-provisioner-${stamp}.json`,
       newFields: newFieldSummary,
       missingValues: missingValueSummary,
+      missingComponents: gaps.missingComponents,
       unprovisionable: gaps.unprovisionableLookups,
       config,
     });

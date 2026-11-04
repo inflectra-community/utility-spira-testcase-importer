@@ -111,3 +111,29 @@ Extends the MVP glossary. New or refined terms:
 | R13 Provisioner | `src/provisioner/index.ts`, `analyzeZephyrGaps` | `src/provisioner/provisioner.test.ts` |
 | R14 Web UI | `src/web/*` | (integration/manual; no feature file yet) |
 | R15 Strategy | `src/strategies/*`, `src/types/strategy.ts` | (covered indirectly via pipeline) |
+
+## Known Gaps / Future Hardening
+
+Deferred items captured for later work. Not yet scheduled.
+
+### H1: Spira API rate management (backoff + throttling)
+
+**Status:** Not implemented. Noted during the multi-project Zephyr work (large bundles: e.g. 74 + 63 test cases, each test case fanning out into several sequential Spira calls).
+
+**Current behaviour:** `src/spira/client.ts` retries **once** on a 5xx with a fixed 2-second delay and nothing else. There is **no** handling for HTTP 429 (rate limit) — a 429 falls straight through and throws immediately. No `Retry-After` support, no exponential backoff, no jitter, no pacing between calls. (The robust `withRetry` with exponential backoff that *does* exist is in `src/mapping/engine.ts` and guards only the LLM calls, not Spira.)
+
+**Risk:** Large imports against throttled Spira Cloud instances can hit 429s mid-run, producing scattered per-record failures instead of a clean backoff-and-continue.
+
+**Proposed fix:** Lift the LLM-layer `withRetry` pattern into the Spira client — handle 429 + 5xx, honour `Retry-After`, exponential backoff with a cap and jitter, up to N attempts; optionally add a small configurable pacing delay between import-engine calls. Centralise in the single `request<T>()` method in `client.ts` so all endpoints benefit.
+
+### H2: Provisioner "apply" vs "export" + data-contract fixes
+
+**Status:** Under discussion (see conversation on absorbing the SpiraProvisioner). Not implemented.
+
+**Problem observed:** The external SpiraProvisioner "wouldn't add values to the target product." Root cause is a model mismatch — the provisioner schema (`spira-structure.schema.json`) only *adds custom fields* (create-a-field), with no construct for appending list values to an **existing** field. This importer exports existing fields (e.g. `Transaction Code`) with extra values, which the external tool can't action. Generated files in the repo root also show a second shape (`customLists`) that is **not** in the published schema, an un-anonymised customer name ("Dr. Oetker"), and an un-split multi-value (`"VL10B,  VL10G"`).
+
+**Two tracks discussed:**
+- **Short term (Option C):** Fix the generator — emit schema-valid output only (`customFields` with `list`/`multilist` types), use `multilist` for comma-valued fields (now that resolution splits them), stop emitting the non-schema `customLists` shape, parameterise program/product names, and scrub hardcoded customer names from committed sample files.
+- **Strategic (Option B):** Port the provisioning *apply* step into Node (`src/provisioner/`), scoped first to custom fields + list values, reusing the existing `SpiraApiClient`. This enables an in-app "detect gap → apply directly" flow with no Python runtime dependency (Option A — bundling the Python app — was rejected as it taxes the non-developer onboarding story and does not deliver real unification).
+
+**Cleanup noted:** Several `spira-provisioner-*.json` files are sitting in the repo root (including `spira-provisioner-oetker-zephyr.json`); these look like test artifacts and should be removed/gitignored, and the customer name anonymised.

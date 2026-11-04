@@ -592,7 +592,14 @@ export interface ZephyrMissingListValues {
 export interface ZephyrGapAnalysis {
   newProperties: ZephyrNewProperty[];
   missingListValues: ZephyrMissingListValues[];
-  /** Priority/status/component names not found — informational only (not provisionable as custom fields) */
+  /**
+   * Component names the Zephyr data uses that aren't in the Spira Components
+   * field. Components are a built-in artifact field, NOT a custom field, so the
+   * SpiraProvisioner cannot create them — an admin must add them to the product
+   * manually. Surfaced distinctly (deduplicated) so they're actionable.
+   */
+  missingComponents: string[];
+  /** Priority/status names not found — informational only (not provisionable). */
   unprovisionableLookups: string[];
 }
 
@@ -614,20 +621,23 @@ export function analyzeZephyrGaps(
   const newProps = new Map<string, Set<string>>();
   // Per existing list CP name, the set of values seen that aren't in the list.
   const missingByProp = new Map<string, { def: typeof metadata.customProperties[number]; missing: Set<string> }>();
+  const missingComponents = new Set<string>();
   const unprovisionable = new Set<string>();
 
   for (const tc of testCases) {
     const meta = (tc as any)._zephyrMeta as { priority?: string; status?: string; component?: string } | undefined;
 
-    // Priority / status / component gaps — not provisionable as custom fields.
+    // Priority / status gaps — informational (can't be provisioned).
     if (meta?.priority && !fuzzyMatchName(meta.priority, metadata.priorities, p => p.name, p => p.active)) {
       unprovisionable.add(`Priority: ${meta.priority}`);
     }
     if (meta?.status && !fuzzyMatchName(meta.status, metadata.statuses, s => s.name, s => s.active)) {
       unprovisionable.add(`Status: ${meta.status}`);
     }
+    // Component gaps — surfaced distinctly; the admin adds these to the Spira
+    // Components field manually (SpiraProvisioner can't create components).
     if (meta?.component && !fuzzyMatchName(meta.component, metadata.components, c => c.name, c => c.active)) {
-      unprovisionable.add(`Component: ${meta.component}`);
+      missingComponents.add(meta.component);
     }
 
     for (const cp of tc.customProperties) {
@@ -676,5 +686,10 @@ export function analyzeZephyrGaps(
     };
   });
 
-  return { newProperties, missingListValues, unprovisionableLookups: [...unprovisionable] };
+  return {
+    newProperties,
+    missingListValues,
+    missingComponents: [...missingComponents].sort(),
+    unprovisionableLookups: [...unprovisionable],
+  };
 }
