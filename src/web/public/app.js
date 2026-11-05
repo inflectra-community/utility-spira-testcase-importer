@@ -356,6 +356,40 @@ $('zProvApply').addEventListener('click', async () => {
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 
+// Renders the field-mapping summary as a collapsed boxout. Each row is a source
+// field and how it lines up with the Spira template (resolves, needs values,
+// new field, or a manual fix like components). Empty → nothing shown.
+function renderFieldMapping(rows) {
+  const el = $('planFieldMapping');
+  if (!rows.length) { el.innerHTML = ''; return; }
+
+  const label = {
+    'needs-values': 'needs values',
+    'new-field': 'new field',
+    'manual': 'manual fix',
+    'ok': 'resolves',
+  };
+  const body = '<table class="map-table"><thead><tr><th>Field</th><th>Status</th><th>Detail</th></tr></thead><tbody>' +
+    rows.map((r) => {
+      const cls = r.status === 'needs-values' || r.status === 'manual' ? 'map-warn' : '';
+      const vals = r.values && r.values.length
+        ? `<br><span class="muted">${escapeHtml(r.values.slice(0, 12).join(', '))}${r.values.length > 12 ? ` …(+${r.values.length - 12})` : ''}</span>`
+        : '';
+      return `<tr><td>${escapeHtml(r.field)}</td>` +
+        `<td class="${cls}">${label[r.status] || r.status}</td>` +
+        `<td>${escapeHtml(r.detail)}${vals}</td></tr>`;
+    }).join('') +
+    '</tbody></table>';
+
+  const needsAttention = rows.filter((r) => r.status !== 'ok').length;
+  el.innerHTML =
+    `<details class="boxout">` +
+    `<summary>Field mapping<span class="sum-meta">${needsAttention ? needsAttention + ' need attention' : 'all resolve'}</span></summary>` +
+    `<div class="boxout-body">${body}` +
+    `<p class="muted" style="margin-top:6px;">Priorities, statuses and steps that resolve cleanly aren't listed here — only fields needing a template change.</p>` +
+    `</div></details>`;
+}
+
 function renderPlan(plan, opts) {
   opts = opts || {};
   $('planCard').classList.remove('hidden');
@@ -402,8 +436,13 @@ function renderPlan(plan, opts) {
       `Administration → Components in Spira, then re-parse so they resolve.</span></div>`;
   }
 
+  // Field mapping: how source fields line up with the Spira template. Shown as a
+  // collapsible boxout (collapsed) so the detail is there without crowding the plan.
+  renderFieldMapping(plan.fieldMapping || []);
+
   // A bundle may define several test sets (one per Zephyr cycle). Fall back to
-  // the single `testSet` for older server responses.
+  // the single `testSet` for older server responses. Each is a collapsible
+  // boxout, collapsed by default so a long member list doesn't dominate the plan.
   const testSets = plan.testSets || (plan.testSet ? [plan.testSet] : []);
   if (testSets.length) {
     const heading = testSets.length > 1
@@ -412,12 +451,14 @@ function renderPlan(plan, opts) {
     $('planTestSet').innerHTML = heading + testSets.map((ts) => {
       const items = ts.members.map((k) => `<li>${escapeHtml(k)}</li>`).join('');
       const skipNote = ts.skipped
-        ? ` <span class="muted">(${ts.skipped} member(s) from other projects skipped)</span>`
+        ? ` <span class="map-warn">${ts.skipped} from other projects skipped</span>`
         : '';
-      return `<div class="card" style="margin-top:12px;background:#eef5f6;">` +
-        `<strong>Test Set:</strong> ${escapeHtml(ts.name)}${skipNote}<br>` +
-        `<span class="muted">Folder: ${escapeHtml(ts.folder)} — ${ts.members.length} member(s)</span>` +
-        `<ol class="member-order">${items}</ol></div>`;
+      return `<details class="boxout">` +
+        `<summary>Test Set: ${escapeHtml(ts.name)}` +
+        `<span class="sum-meta">${ts.members.length} member(s)${skipNote ? ' · ' + skipNote : ''}</span></summary>` +
+        `<div class="boxout-body">` +
+        `<span class="muted">Folder: ${escapeHtml(ts.folder)}</span>` +
+        `<ol class="member-order">${items}</ol></div></details>`;
     }).join('');
   } else {
     $('planTestSet').innerHTML = '';

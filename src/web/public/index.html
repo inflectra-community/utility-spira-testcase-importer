@@ -70,8 +70,19 @@
   .progress-bar { background: var(--teal); height: 100%; width: 0; transition: width .2s; }
   .log { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 12px; background: #06282f; color: #cfe3e7; padding: 12px; border-radius: 6px; max-height: 220px; overflow: auto; white-space: pre-wrap; }
   .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #eef5f6; color: var(--teal); margin-left: 6px; }
-  .member-order { counter-reset: m; }
+  .member-order { counter-reset: m; margin: 8px 0 0; }
   .member-order li { margin: 2px 0; }
+  /* Collapsible boxouts (Test Sets, field mapping) */
+  details.boxout { background: #eef5f6; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin-top: 12px; }
+  details.boxout > summary { cursor: pointer; list-style: none; font-weight: 600; color: var(--teal); display: flex; align-items: center; gap: 8px; }
+  details.boxout > summary::-webkit-details-marker { display: none; }
+  details.boxout > summary::before { content: "▸"; font-size: 11px; color: var(--teal); transition: transform .15s; }
+  details.boxout[open] > summary::before { transform: rotate(90deg); }
+  details.boxout > summary .sum-meta { font-weight: 400; color: #5b7177; margin-left: auto; font-size: 12px; }
+  details.boxout .boxout-body { margin-top: 10px; }
+  .map-table th, .map-table td { text-align: left; font-size: 13px; }
+  .map-ok { color: #1a7f5a; }
+  .map-warn { color: var(--warn); }
 </style>
 </head>
 <body>
@@ -173,6 +184,7 @@
     <div class="card hidden" id="planCard">
       <h2>3. Review the plan</h2>
       <div id="planSummary"></div>
+      <div id="planFieldMapping"></div>
       <div id="planTestSet"></div>
       <table id="planTable"><thead><tr><th>Key</th><th>Name</th><th>Folder</th><th>Steps</th></tr></thead><tbody></tbody></table>
 

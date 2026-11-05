@@ -87,6 +87,49 @@ function spiraConfigFromSettings(s: AppSettings): SpiraConfig {
 }
 
 /**
+ * Builds a readable field-mapping summary from the gap analysis, so the plan
+ * view can show which source fields resolve cleanly and which have values the
+ * template is missing — grouped per field, not as a flat warning list.
+ */
+function buildFieldMappingSummary(gaps: ZephyrGapAnalysis): Array<{
+  field: string;
+  status: 'ok' | 'needs-values' | 'new-field' | 'manual';
+  detail: string;
+  values?: string[];
+}> {
+  const rows: Array<{ field: string; status: 'ok' | 'needs-values' | 'new-field' | 'manual'; detail: string; values?: string[] }> = [];
+
+  for (const m of gaps.missingListValues) {
+    rows.push({
+      field: m.propertyName,
+      status: 'needs-values',
+      detail: `${m.missingValues.length} value(s) not yet in the Spira list`,
+      values: m.missingValues,
+    });
+  }
+  for (const p of gaps.newProperties) {
+    rows.push({
+      field: p.name,
+      status: 'new-field',
+      detail: `not in the template — would be created with ${p.uniqueValues.length} value(s)`,
+      values: p.uniqueValues,
+    });
+  }
+  if (gaps.missingComponents.length) {
+    rows.push({
+      field: 'Component',
+      status: 'manual',
+      detail: 'component(s) missing from the Spira Components field (add manually)',
+      values: gaps.missingComponents,
+    });
+  }
+  for (const u of gaps.unprovisionableLookups) {
+    rows.push({ field: u.split(':')[0].trim(), status: 'manual', detail: u });
+  }
+  return rows;
+}
+
+/**
  * Resolves the program/product names for a SpiraProvisioner export.
  *
  * The importer is bound to a single Spira product (via Settings), so the
@@ -392,6 +435,10 @@ export function createServer() {
           // Components the source uses that aren't in the Spira Components field.
           // These must be added manually (not provisionable), so flag them here.
           missingComponents: gaps.missingComponents,
+          // Structured field-mapping summary: how each resolvable source field
+          // lines up with the Spira template, so the UI can show it clearly
+          // instead of just a warning count.
+          fieldMapping: buildFieldMappingSummary(gaps),
           // Back-compat for any older client code reading a single testSet.
           testSet: bundle.testSet
             ? {
