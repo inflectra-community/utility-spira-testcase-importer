@@ -25,7 +25,7 @@ import { createLogger } from '../logger/index.js';
 import { createSpiraClient, type SpiraApiClient } from '../spira/client.js';
 import { fetchAllMetadata } from '../spira/metadata.js';
 import { isZephyrBundle, parseZephyrBundle, findZephyrBundles } from '../parser/zephyr-bundle.js';
-import { resolveZephyrMetadata, analyzeZephyrGaps, type ZephyrGapAnalysis } from '../pipeline-zephyr.js';
+import { resolveZephyrMetadata, analyzeZephyrGaps, fuzzyMatchName, type ZephyrGapAnalysis } from '../pipeline-zephyr.js';
 import { createExcelParser, type SheetData } from '../parser/index.js';
 import { createValidationEngine } from '../validator/index.js';
 import { createDataTransformer } from '../transformer/index.js';
@@ -84,6 +84,58 @@ function spiraConfigFromSettings(s: AppSettings): SpiraConfig {
     apiKey: s.spira.apiKey,
     projectId: s.spira.projectId,
   };
+}
+
+/**
+ * Builds the full source→Spira property correspondence for a parsed Zephyr
+ * bundle: the fixed field mapping (name, priority, status, component, folder,
+ * steps, labels) plus every custom field the bundle uses and the Spira custom
+ * property it resolves to (by fuzzy name). Must run BEFORE resolveZephyrMetadata
+ * strips `_zephyrMeta` / named custom properties.
+ */
+function buildSourceMapping(
+  bundle: ZephyrBundleResult,
+  metadata: TemplateMetadata,
+): Array<{ source: string; target: string; resolved: boolean; note?: string }> {
+  const rows: Array<{ source: string; target: string; resolved: boolean; note?: string }> = [];
+
+  // Fixed structural fields (always mapped the same way).
+  rows.push({ source: 'name', target: 'Test Case → Name', resolved: true });
+  rows.push({ source: 'priority', target: 'Test Case → Priority', resolved: true, note: 'matched to a Spira priority by name' });
+  rows.push({ source: 'status', target: 'Test Case → Status', resolved: true, note: 'matched to a Spira status by name' });
+  rows.push({ source: 'component', target: 'Test Case → Component(s)', resolved: true, note: 'matched to the Spira Components field by name' });
+  rows.push({ source: 'folder', target: 'Test Case → Folder path', resolved: true });
+  rows.push({ source: 'testScript.steps', target: 'Test Steps', resolved: true });
+  rows.push({ source: 'labels', target: 'Test Case → Tags', resolved: true });
+
+  // Custom fields are dynamic — collect every name used across the bundle, then
+  // resolve each to a Spira custom property by fuzzy name.
+  const seen = new Set<string>();
+  for (const tc of bundle.testCases) {
+    for (const cp of tc.customProperties as Array<{ name?: string }>) {
+      const name = cp.name;
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      const def = fuzzyMatchName(name, metadata.customProperties, d => d.name);
+      if (def) {
+        rows.push({
+          source: `customFields → ${name}`,
+          target: `Custom Property → ${def.name}`,
+          resolved: true,
+          note: `${def.customPropertyTypeName}${def.name !== name ? ' (matched by name)' : ''}`,
+        });
+      } else {
+        rows.push({
+          source: `customFields → ${name}`,
+          target: '(no matching custom property)',
+          resolved: false,
+          note: 'not in the template — would be created if provisioned',
+        });
+      }
+    }
+  }
+
+  return rows;
 }
 
 /**
@@ -360,8 +412,10 @@ export function createServer() {
         if (key) keyToRowIndex.set(key, tc.sourceRowIndex);
       }
 
-      // Collect template gaps BEFORE resolution strips _zephyrMeta / named CPs.
+      // Collect template gaps + the source→Spira field map BEFORE resolution
+      // strips _zephyrMeta / named custom properties.
       const gaps = analyzeZephyrGaps(bundle.testCases, metadata);
+      const sourceMapping = buildSourceMapping(bundle, metadata);
 
       const warnings = resolveZephyrMetadata(bundle.testCases, metadata);
 
@@ -439,6 +493,8 @@ export function createServer() {
           // lines up with the Spira template, so the UI can show it clearly
           // instead of just a warning count.
           fieldMapping: buildFieldMappingSummary(gaps),
+          // Full source→Spira property correspondence for the whole bundle.
+          sourceMapping,
           // Back-compat for any older client code reading a single testSet.
           testSet: bundle.testSet
             ? {

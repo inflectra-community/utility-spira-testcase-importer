@@ -356,6 +356,32 @@ $('zProvApply').addEventListener('click', async () => {
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 
+// Renders the full source→Spira property correspondence. Open by default: this
+// is the "what maps to what" overview. An arrow shows each source field and the
+// Spira property it lands on; unresolved rows are flagged.
+function renderSourceMapping(rows) {
+  const el = $('planSourceMapping');
+  if (!el) return;
+  if (!rows.length) { el.innerHTML = ''; return; }
+
+  const body = '<table class="map-table"><thead><tr><th>Source field</th><th></th><th>Spira property</th><th>Notes</th></tr></thead><tbody>' +
+    rows.map((r) => {
+      const cls = r.resolved ? '' : 'map-warn';
+      return `<tr><td><code>${escapeHtml(r.source)}</code></td>` +
+        `<td class="muted">→</td>` +
+        `<td class="${cls}">${escapeHtml(r.target)}</td>` +
+        `<td class="muted">${escapeHtml(r.note || '')}</td></tr>`;
+    }).join('') +
+    '</tbody></table>';
+
+  const unresolved = rows.filter((r) => !r.resolved).length;
+  el.innerHTML =
+    `<details class="boxout" open>` +
+    `<summary>Source fields → Spira properties` +
+    `<span class="sum-meta">${rows.length} field(s)${unresolved ? ` · ${unresolved} unmapped` : ''}</span></summary>` +
+    `<div class="boxout-body">${body}</div></details>`;
+}
+
 // Renders the field-mapping summary as a collapsed boxout. Each row is a source
 // field and how it lines up with the Spira template (resolves, needs values,
 // new field, or a manual fix like components). Empty → nothing shown.
@@ -436,6 +462,9 @@ function renderPlan(plan, opts) {
       `Administration → Components in Spira, then re-parse so they resolve.</span></div>`;
   }
 
+  // Source → Spira property correspondence for the whole bundle.
+  renderSourceMapping(plan.sourceMapping || []);
+
   // Field mapping: how source fields line up with the Spira template. Shown as a
   // collapsible boxout (collapsed) so the detail is there without crowding the plan.
   renderFieldMapping(plan.fieldMapping || []);
@@ -463,6 +492,10 @@ function renderPlan(plan, opts) {
   } else {
     $('planTestSet').innerHTML = '';
   }
+
+  // Test case table count shown on the (collapsed-by-default) boxout summary.
+  if ($('planTableCount')) $('planTableCount').textContent = `${plan.testCases.length} case(s)`;
+  if ($('planTableBox')) $('planTableBox').open = false;
 
   // Header differs: Zephyr has a Key column, Excel does not.
   const hasKey = plan.testCases.some((tc) => tc.key !== undefined);

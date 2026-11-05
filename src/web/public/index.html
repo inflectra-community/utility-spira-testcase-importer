@@ -80,7 +80,8 @@
   details.boxout[open] > summary::before { transform: rotate(90deg); }
   details.boxout > summary .sum-meta { font-weight: 400; color: #5b7177; margin-left: auto; font-size: 12px; }
   details.boxout .boxout-body { margin-top: 10px; }
-  .map-table th, .map-table td { text-align: left; font-size: 13px; }
+  .map-table th, .map-table td { text-align: left; font-size: 13px; vertical-align: top; }
+  .map-table code { background: #dce9ec; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
   .map-ok { color: #1a7f5a; }
   .map-warn { color: var(--warn); }
 </style>
@@ -184,9 +185,15 @@
     <div class="card hidden" id="planCard">
       <h2>3. Review the plan</h2>
       <div id="planSummary"></div>
+      <div id="planSourceMapping"></div>
       <div id="planFieldMapping"></div>
       <div id="planTestSet"></div>
-      <table id="planTable"><thead><tr><th>Key</th><th>Name</th><th>Folder</th><th>Steps</th></tr></thead><tbody></tbody></table>
+      <details class="boxout" id="planTableBox">
+        <summary>Test cases<span class="sum-meta" id="planTableCount"></span></summary>
+        <div class="boxout-body">
+          <table id="planTable"><thead><tr><th>Key</th><th>Name</th><th>Folder</th><th>Steps</th></tr></thead><tbody></tbody></table>
+        </div>
+      </details>
 
       <!-- Zephyr: provisioner export (shown when the bundle references template gaps) -->
       <div id="zephyrProvisioner" class="hidden" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;">
