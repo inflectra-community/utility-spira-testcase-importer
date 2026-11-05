@@ -91,6 +91,8 @@ export interface SpiraApiClient {
   getTestCaseTypes(): Promise<TestCaseType[]>;
   getProjectUsers(): Promise<ProjectUser[]>;
   getComponents(): Promise<Component[]>;
+  /** Creates a new active component in the project. Returns the created component. */
+  createComponent(name: string): Promise<Component>;
   getTestFolders(): Promise<TestCaseFolder[]>;
   createTestFolder(folder: CreateFolderRequest): Promise<TestCaseFolder>;
   createTestCase(testCase: CreateTestCaseRequest): Promise<{ TestCaseId: number }>;
@@ -456,6 +458,23 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
   }
 
   /**
+   * Creates a new active component in the project.
+   * POST /projects/{project_id}/components
+   */
+  async function createComponent(name: string): Promise<Component> {
+    const raw = await request<any>(
+      'POST',
+      `/projects/${config.projectId}/components`,
+      { ProjectId: config.projectId, Name: name, IsActive: true },
+    );
+    return {
+      componentId: raw?.ComponentId ?? raw?.componentId,
+      name: raw?.Name ?? raw?.name ?? name,
+      active: raw?.IsActive ?? raw?.isActive ?? true,
+    };
+  }
+
+  /**
    * Retrieves all test case folders in the project.
    */
   async function getTestFolders(): Promise<TestCaseFolder[]> {
@@ -632,6 +651,7 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
     getTestCaseTypes,
     getProjectUsers,
     getComponents,
+    createComponent,
     getTestFolders,
     createTestFolder,
     createTestCase,

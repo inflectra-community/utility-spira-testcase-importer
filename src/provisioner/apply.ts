@@ -38,10 +38,12 @@ export interface ProvisionApplyResult {
   valuesAdded: Array<{ property: string; values: string[] }>;
   /** New custom properties created: name → type. */
   propertiesCreated: Array<{ name: string; type: string; values?: string[] }>;
+  /** Components created in the project's Components field. */
+  componentsCreated: string[];
   /** Non-fatal problems (e.g. a value Spira rejected). */
   warnings: string[];
   /** Totals for a quick summary. */
-  totals: { valuesAdded: number; propertiesCreated: number };
+  totals: { valuesAdded: number; propertiesCreated: number; componentsCreated: number };
 }
 
 const PROP_TYPE = { text: 1, integer: 2, boolean: 4, date: 5, list: 6, multilist: 7 } as const;
@@ -61,8 +63,9 @@ export async function applyProvisioning(
   const result: ProvisionApplyResult = {
     valuesAdded: [],
     propertiesCreated: [],
+    componentsCreated: [],
     warnings: [],
-    totals: { valuesAdded: 0, propertiesCreated: 0 },
+    totals: { valuesAdded: 0, propertiesCreated: 0, componentsCreated: 0 },
   };
 
   const wantsMulti = (name: string, dataDefault: boolean) =>
@@ -116,6 +119,21 @@ export async function applyProvisioning(
     } catch (err) {
       result.warnings.push(
         `Could not create property "${np.name}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  // 3. Components the source uses that aren't in the Spira Components field.
+  // Components are a built-in artifact field but are still creatable via the API.
+  for (const name of gaps.missingComponents) {
+    try {
+      await client.createComponent(name);
+      result.componentsCreated.push(name);
+      result.totals.componentsCreated += 1;
+      logger.info(`Created component "${name}".`);
+    } catch (err) {
+      result.warnings.push(
+        `Could not create component "${name}": ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

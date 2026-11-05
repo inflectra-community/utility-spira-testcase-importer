@@ -113,6 +113,7 @@ function createFullMockClient(): SpiraApiClient {
     addCustomListValues: vi.fn(),
     createCustomList: vi.fn(),
     createCustomProperty: vi.fn(),
+    createComponent: vi.fn(),
     getCustomListValues: vi.fn().mockImplementation((listId: number) => {
       if (listId === 10) return Promise.resolve(sampleListValues);
       if (listId === 20) return Promise.resolve(sampleMultiListValues);
@@ -283,6 +284,7 @@ describe('fetchAllMetadata', () => {
       addCustomListValues: vi.fn(),
       createCustomList: vi.fn(),
       createCustomProperty: vi.fn(),
+      createComponent: vi.fn(),
       getCustomListValues: vi.fn().mockRejectedValue(new Error('err2')),
       getTestCasePriorities: vi.fn().mockRejectedValue(new Error('err3')),
       getTestCaseStatuses: vi.fn().mockRejectedValue(new Error('err4')),

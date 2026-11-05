@@ -16,6 +16,7 @@ function mockClient(overrides?: Partial<SpiraApiClient>): SpiraApiClient {
     addCustomListValues: vi.fn().mockResolvedValue([]),
     createCustomList: vi.fn().mockResolvedValue({ customListId: 999 }),
     createCustomProperty: vi.fn().mockResolvedValue({}),
+    createComponent: vi.fn().mockResolvedValue({ componentId: 1, name: 'c', active: true }),
     ...overrides,
   } as unknown as SpiraApiClient;
 }
@@ -108,6 +109,30 @@ describe('applyProvisioning', () => {
       expect.objectContaining({ name: 'Notes', customPropertyTypeId: 1 }),
     );
     expect(res.propertiesCreated[0].type).toBe('text');
+  });
+
+  it('creates missing components in the project', async () => {
+    const client = mockClient();
+    const res = await applyProvisioning(client, {
+      metadata: metadata(),
+      gaps: gaps({ missingComponents: ['CO', 'PM'] }),
+    }, logger);
+
+    expect(client.createComponent).toHaveBeenCalledWith('CO');
+    expect(client.createComponent).toHaveBeenCalledWith('PM');
+    expect(res.componentsCreated).toEqual(['CO', 'PM']);
+    expect(res.totals.componentsCreated).toBe(2);
+  });
+
+  it('captures a component-create error as a warning', async () => {
+    const client = mockClient({ createComponent: vi.fn().mockRejectedValue(new Error('nope')) });
+    const res = await applyProvisioning(client, {
+      metadata: metadata(),
+      gaps: gaps({ missingComponents: ['CO'] }),
+    }, logger);
+
+    expect(res.totals.componentsCreated).toBe(0);
+    expect(res.warnings[0]).toMatch(/Could not create component "CO".*nope/);
   });
 
   it('captures a Spira error as a warning instead of throwing', async () => {

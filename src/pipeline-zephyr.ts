@@ -602,9 +602,9 @@ export interface ZephyrGapAnalysis {
   missingListValues: ZephyrMissingListValues[];
   /**
    * Component names the Zephyr data uses that aren't in the Spira Components
-   * field. Components are a built-in artifact field, NOT a custom field, so the
-   * SpiraProvisioner cannot create them — an admin must add them to the product
-   * manually. Surfaced distinctly (deduplicated) so they're actionable.
+   * field. Components are a built-in artifact field (not a custom field), so the
+   * exported SpiraProvisioner file can't express them — but the direct "Apply to
+   * Spira" path creates them via the REST API. Surfaced distinctly (deduplicated).
    */
   missingComponents: string[];
   /** Priority/status names not found — informational only (not provisionable). */

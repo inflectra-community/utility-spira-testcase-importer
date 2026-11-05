@@ -330,8 +330,9 @@ $('zProvApply').addEventListener('click', async () => {
   if (r.empty) { resultEl.innerHTML = `<div class="status ok">${escapeHtml(r.message)}</div>`; return; }
 
   const res = r.result;
-  let html = `<div class="status ok">Applied to Spira: added <strong>${res.totals.valuesAdded}</strong> list value(s) ` +
-    `and created <strong>${res.totals.propertiesCreated}</strong> field(s). Re-parse to pick up the changes.</div>`;
+  let html = `<div class="status ok">Applied to Spira: added <strong>${res.totals.valuesAdded}</strong> list value(s), ` +
+    `created <strong>${res.totals.propertiesCreated}</strong> field(s) ` +
+    `and <strong>${res.totals.componentsCreated || 0}</strong> component(s). Re-parse to pick up the changes.</div>`;
   if (res.valuesAdded.length) {
     html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">Values added</h3>' +
       '<table><thead><tr><th>Property</th><th>Values</th></tr></thead><tbody>' +
@@ -345,6 +346,10 @@ $('zProvApply').addEventListener('click', async () => {
       res.propertiesCreated.map((p) =>
         `<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.type)}</td></tr>`).join('') +
       '</tbody></table>';
+  }
+  if (res.componentsCreated && res.componentsCreated.length) {
+    html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">Components created</h3>' +
+      `<p>${res.componentsCreated.map(escapeHtml).join(', ')}</p>`;
   }
   if (res.warnings && res.warnings.length) {
     html += '<div class="status warn" style="margin-top:10px;">' +
@@ -458,8 +463,8 @@ function renderPlan(plan, opts) {
       `<div class="status warn" style="margin-top:8px;">` +
       `<strong>${plan.missingComponents.length} component(s) aren't in this product's Components list:</strong> ` +
       `${plan.missingComponents.map(escapeHtml).join(', ')}.<br>` +
-      `<span class="muted">Components can't be provisioned via the structure file — add them under ` +
-      `Administration → Components in Spira, then re-parse so they resolve.</span></div>`;
+      `<span class="muted">Use <em>Apply to Spira now</em> below to create them, or add them under ` +
+      `Administration → Components, then re-parse so they resolve.</span></div>`;
   }
 
   // Source → Spira property correspondence for the whole bundle.

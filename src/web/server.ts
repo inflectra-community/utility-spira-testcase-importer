@@ -170,8 +170,8 @@ function buildFieldMappingSummary(gaps: ZephyrGapAnalysis): Array<{
   if (gaps.missingComponents.length) {
     rows.push({
       field: 'Component',
-      status: 'manual',
-      detail: 'component(s) missing from the Spira Components field (add manually)',
+      status: 'needs-values',
+      detail: `${gaps.missingComponents.length} component(s) not yet in the Spira Components field`,
       values: gaps.missingComponents,
     });
   }
