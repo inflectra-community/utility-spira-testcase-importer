@@ -40,6 +40,13 @@ export interface ProvisionApplyResult {
   propertiesCreated: Array<{ name: string; type: string; values?: string[] }>;
   /** Components created in the project's Components field. */
   componentsCreated: string[];
+  /**
+   * Existing single-select list fields the user wants as multi-select. Spira
+   * can't convert a field's type via the API (the type is fixed at creation),
+   * so these require a one-time manual toggle in the admin UI. Reported, not
+   * applied. Values are still added to the field regardless of its type.
+   */
+  manualConversions: string[];
   /** Non-fatal problems (e.g. a value Spira rejected). */
   warnings: string[];
   /** Totals for a quick summary. */
@@ -64,6 +71,7 @@ export async function applyProvisioning(
     valuesAdded: [],
     propertiesCreated: [],
     componentsCreated: [],
+    manualConversions: [],
     warnings: [],
     totals: { valuesAdded: 0, propertiesCreated: 0, componentsCreated: 0 },
   };
@@ -71,10 +79,22 @@ export async function applyProvisioning(
   const wantsMulti = (name: string, dataDefault: boolean) =>
     Array.isArray(multiSelect) ? multiSelect.includes(name) : dataDefault;
 
+  // Spira custom property type ids: 6 = single-select List, 7 = MultiList.
+  const TYPE_LIST = 6;
+
   // 1. Existing list properties missing some values → add them to the backing list.
   for (const mv of gaps.missingListValues) {
-    if (mv.missingValues.length === 0) continue;
     const def = metadata.customProperties.find(p => p.name === mv.propertyName);
+
+    // If the user wants this field multi-select but it already exists as a
+    // single-select list, flag it: Spira can't change a field's type via the
+    // API (fixed at creation). The admin must toggle it in the UI once. We
+    // still add the values below so the list is ready either way.
+    if (def && def.customPropertyTypeId === TYPE_LIST && wantsMulti(mv.propertyName, mv.multiValued)) {
+      result.manualConversions.push(mv.propertyName);
+    }
+
+    if (mv.missingValues.length === 0) continue;
     if (!def?.customListId) {
       result.warnings.push(`Skipped "${mv.propertyName}": no backing custom list found to add values to.`);
       continue;

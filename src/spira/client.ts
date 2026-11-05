@@ -76,6 +76,8 @@ export class SpiraApiError extends Error {
  */
 export interface SpiraApiClient {
   authenticate(): Promise<void>;
+  /** The project's template id, resolved during authenticate(). Throws if called before. */
+  getTemplateId(): number;
   /** Product (project) name and its program name, as Spira knows them. */
   getProjectInfo(): Promise<{ productName: string; programName?: string }>;
   getCustomProperties(artifactTypeName: string): Promise<CustomPropertyDefinition[]>;
@@ -640,6 +642,7 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
 
   return {
     authenticate,
+    getTemplateId,
     getProjectInfo,
     getCustomProperties,
     getCustomListValues,

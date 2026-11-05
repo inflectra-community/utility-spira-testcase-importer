@@ -86,6 +86,18 @@ function spiraConfigFromSettings(s: AppSettings): SpiraConfig {
   };
 }
 
+/** Spira ArtifactTypeId for Test Cases (used in admin deep links). */
+const ARTIFACT_TYPE_TEST_CASE = 2;
+
+/**
+ * Builds a deep link to the Spira template's Test Case custom-properties admin
+ * page, e.g. https://host/pt/23/Administration/CustomProperties.aspx?artifactTypeId=2
+ * ("pt" = Product Template; the number is the Template ID).
+ */
+function customPropertyAdminUrl(baseUrl: string, templateId: number): string {
+  return `${baseUrl.replace(/\/+$/, '')}/pt/${templateId}/Administration/CustomProperties.aspx?artifactTypeId=${ARTIFACT_TYPE_TEST_CASE}`;
+}
+
 /**
  * Builds the full source→Spira property correspondence for a parsed Zephyr
  * bundle: the fixed field mapping (name, priority, status, component, folder,
@@ -240,7 +252,7 @@ export function createServer() {
     try {
       const client = createSpiraClient(spiraConfigFromSettings(s), logger);
       await client.authenticate();
-      const { metadata } = await fetchAllMetadata(client, spiraConfigFromSettings(s), 0, logger);
+      const { metadata } = await fetchAllMetadata(client, spiraConfigFromSettings(s), client.getTemplateId(), logger);
       res.json({
         ok: true,
         project: { id: metadata.projectId, templateId: metadata.templateId },
@@ -331,7 +343,7 @@ export function createServer() {
       try {
         const client = createSpiraClient(spiraConfigFromSettings(s), logger);
         await client.authenticate();
-        const { metadata } = await fetchAllMetadata(client, spiraConfigFromSettings(s), 0, logger);
+        const { metadata } = await fetchAllMetadata(client, spiraConfigFromSettings(s), client.getTemplateId(), logger);
 
         const spreadsheet = await createExcelParser().parse(sourcePath);
         const { sheet: requestedSheet } = req.body as { sheet?: string };
@@ -401,7 +413,7 @@ export function createServer() {
     try {
       const client = createSpiraClient(spiraConfigFromSettings(s), logger);
       await client.authenticate();
-      const { metadata } = await fetchAllMetadata(client, spiraConfigFromSettings(s), 0, logger);
+      const { metadata } = await fetchAllMetadata(client, spiraConfigFromSettings(s), client.getTemplateId(), logger);
 
       const bundle = parseZephyrBundle(sourcePath);
 
@@ -460,6 +472,10 @@ export function createServer() {
               kind: 'existing' as const,
               valueCount: m.missingValues.length,
               multiValued: m.multiValued,
+              // Already a single-select list in the template → multi-select can't
+              // be applied via the API; the user must toggle it in Spira's admin UI.
+              existingSingleSelect:
+                metadata.customProperties.find(p => p.name === m.propertyName)?.customPropertyTypeId === 6,
             })),
             ...gaps.newProperties.map(p => ({
               name: p.name,
@@ -767,7 +783,12 @@ export function createServer() {
       const client = createSpiraClient(spiraConfigFromSettings(s), logger);
       await client.authenticate();
       const result = await applyProvisioning(client, { gaps, metadata: session.metadata, multiSelect }, logger);
-      res.json({ ok: true, empty: false, result });
+      // When fields need a manual single→multi conversion, hand back a deep link
+      // to the Spira template's Test Case custom-properties admin page.
+      const adminUrl = result.manualConversions.length
+        ? customPropertyAdminUrl(s.spira.baseUrl, session.metadata.templateId)
+        : undefined;
+      res.json({ ok: true, empty: false, result, adminUrl });
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }

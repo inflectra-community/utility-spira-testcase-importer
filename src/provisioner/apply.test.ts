@@ -111,6 +111,36 @@ describe('applyProvisioning', () => {
     expect(res.propertiesCreated[0].type).toBe('text');
   });
 
+  it('flags an existing single-select field for manual conversion when multi-select is wanted, but still adds values', async () => {
+    const client = mockClient();
+    // metadata()'s "Country" is type 6 (single-select List), backed by list 44.
+    const md = metadata();
+    md.customProperties[0].customListId = 44;
+    const res = await applyProvisioning(client, {
+      metadata: md,
+      gaps: gaps({ missingListValues: [{ propertyName: 'Country', existingValues: ['DE'], missingValues: ['HU'], multiValued: true }] }),
+      multiSelect: ['Country'],
+    }, logger);
+
+    // Values are still added…
+    expect(client.addCustomListValues).toHaveBeenCalledWith(44, ['HU']);
+    expect(res.totals.valuesAdded).toBe(1);
+    // …but the type change is reported, not attempted.
+    expect(res.manualConversions).toEqual(['Country']);
+  });
+
+  it('does NOT flag manual conversion when the user does not want multi-select', async () => {
+    const client = mockClient();
+    const md = metadata();
+    md.customProperties[0].customListId = 44;
+    const res = await applyProvisioning(client, {
+      metadata: md,
+      gaps: gaps({ missingListValues: [{ propertyName: 'Country', existingValues: [], missingValues: ['HU'], multiValued: false }] }),
+      multiSelect: [], // nothing ticked
+    }, logger);
+    expect(res.manualConversions).toEqual([]);
+  });
+
   it('creates missing components in the project', async () => {
     const client = mockClient();
     const res = await applyProvisioning(client, {

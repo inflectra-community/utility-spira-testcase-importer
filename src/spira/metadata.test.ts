@@ -109,6 +109,7 @@ function createFullMockClient(): SpiraApiClient {
   return {
     authenticate: vi.fn(),
     getProjectInfo: vi.fn(),
+    getTemplateId: vi.fn().mockReturnValue(1),
     getCustomProperties: vi.fn().mockResolvedValue(sampleCustomProperties),
     addCustomListValues: vi.fn(),
     createCustomList: vi.fn(),
@@ -280,6 +281,7 @@ describe('fetchAllMetadata', () => {
     const client: SpiraApiClient = {
       authenticate: vi.fn(),
       getProjectInfo: vi.fn(),
+      getTemplateId: vi.fn().mockReturnValue(1),
       getCustomProperties: vi.fn().mockRejectedValue(new Error('err1')),
       addCustomListValues: vi.fn(),
       createCustomList: vi.fn(),

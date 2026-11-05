@@ -351,6 +351,18 @@ $('zProvApply').addEventListener('click', async () => {
     html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">Components created</h3>' +
       `<p>${res.componentsCreated.map(escapeHtml).join(', ')}</p>`;
   }
+  if (res.manualConversions && res.manualConversions.length) {
+    const link = r.adminUrl
+      ? `<a href="${escapeAttr(r.adminUrl)}" target="_blank" rel="noopener">Custom Properties admin page</a>`
+      : '<strong>Administration → Custom Properties</strong>';
+    html += '<div class="status warn" style="margin-top:10px;">' +
+      `<strong>One manual step needed:</strong> ${res.manualConversions.map(escapeHtml).join(', ')} ` +
+      `must be switched to <em>Multi-Select List</em> in Spira. The API can't change an existing ` +
+      `field's type, so open the ${link}, edit each field, set its type to Multi-Select List, then re-parse. ` +
+      `(The values have already been added.)<br>` +
+      `<span class="muted">Note: switching to Multi-Select is effectively one-way — reverting to ` +
+      `single-select later can lose multi-value data, so only convert if you're sure.</span></div>`;
+  }
   if (res.warnings && res.warnings.length) {
     html += '<div class="status warn" style="margin-top:10px;">' +
       res.warnings.map(escapeHtml).join('<br>') + '</div>';
@@ -435,14 +447,19 @@ function renderPlan(plan, opts) {
   const fields = plan.provisionerFields || [];
   $('zProvFields').innerHTML = fields.length
     ? '<table><thead><tr><th>Field</th><th>Values to add</th><th>Multi-select</th></tr></thead><tbody>' +
-      fields.map((f) =>
-        `<tr><td>${escapeHtml(f.name)}${f.kind === 'new' ? ' <span class="muted">(new)</span>' : ''}</td>` +
-        `<td>${f.valueCount}</td>` +
-        `<td><input type="checkbox" class="zMulti" data-field="${escapeAttr(f.name)}"${f.multiValued ? ' checked' : ''} ` +
-        `aria-label="Make ${escapeAttr(f.name)} a multi-select list" /></td></tr>`).join('') +
+      fields.map((f) => {
+        // An existing single-select field can't be converted via the API — the
+        // checkbox would do nothing on apply. Show a manual-step note instead.
+        const multiCell = f.existingSingleSelect
+          ? '<span class="map-warn" title="Spira can\'t convert an existing field\'s type via the API">needs manual toggle</span>'
+          : `<input type="checkbox" class="zMulti" data-field="${escapeAttr(f.name)}"${f.multiValued ? ' checked' : ''} aria-label="Make ${escapeAttr(f.name)} a multi-select list" />`;
+        return `<tr><td>${escapeHtml(f.name)}${f.kind === 'new' ? ' <span class="muted">(new)</span>' : ''}</td>` +
+          `<td>${f.valueCount}</td><td>${multiCell}</td></tr>`;
+      }).join('') +
       '</tbody></table>' +
-      '<p class="muted" style="margin-top:6px;">Tick <em>Multi-select</em> for fields where a test case can have several values ' +
-      '(pre-ticked when this source has comma-separated values).</p>'
+      '<p class="muted" style="margin-top:6px;">Tick <em>Multi-select</em> for new fields where a test case can have several values ' +
+      '(pre-ticked when this source has comma-separated values). Existing fields marked ' +
+      '<em>needs manual toggle</em> must be changed to Multi-Select in Spira\'s admin UI — the API can\'t convert them.</p>'
     : '';
 
   const vKind = plan.validationErrors > 0 ? 'err' : 'ok';
