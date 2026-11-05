@@ -41,6 +41,7 @@ import {
   DEFAULT_TEST_CASE_FIELDS,
 } from '../core/excel-mapping.js';
 import { extractColumnInfo, findMissingListValues, generateProvisionerConfig, inferFieldType } from '../provisioner/index.js';
+import { applyProvisioning } from '../provisioner/apply.js';
 import type { SpiraConfig } from '../types/config.js';
 import type { TransformedTestCase } from '../types/transform.js';
 import type { ZephyrBundleResult } from '../parser/zephyr-bundle.js';
@@ -639,6 +640,34 @@ export function createServer() {
       unprovisionable: gaps.unprovisionableLookups,
       config,
     });
+  });
+
+  // ── Zephyr: APPLY template changes directly to Spira (no file export) ───────
+  // Adds missing list values to existing properties and creates new properties,
+  // using the Spira REST API. This is what the external SpiraProvisioner can't
+  // do for already-existing fields.
+  app.post('/api/zephyr/provision-apply', async (req, res) => {
+    const session = currentSession;
+    if (!session || session.format !== 'zephyr' || !session.zephyrGaps) {
+      res.status(400).json({ ok: false, error: 'No Zephyr bundle parsed.' });
+      return;
+    }
+    const gaps = session.zephyrGaps;
+    if (gaps.newProperties.length === 0 && gaps.missingListValues.length === 0) {
+      res.json({ ok: true, empty: true, message: 'Nothing to apply — every field and value is already in the template.' });
+      return;
+    }
+    const { multiSelect } = (req.body ?? {}) as { multiSelect?: string[] };
+    const logger = createLogger();
+    try {
+      const s = loadSettings();
+      const client = createSpiraClient(spiraConfigFromSettings(s), logger);
+      await client.authenticate();
+      const result = await applyProvisioning(client, { gaps, metadata: session.metadata, multiSelect }, logger);
+      res.json({ ok: true, empty: false, result });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // ── Import (SSE progress) ───────────────────────────────────────────────────

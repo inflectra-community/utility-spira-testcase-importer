@@ -28,6 +28,23 @@ import type {
   TestSetTestCaseMapping,
 } from '../types/import.js';
 
+/** Spira ArtifactTypeId for Test Cases (used when creating custom properties). */
+export const ARTIFACT_TYPE_TEST_CASE = 2;
+
+/**
+ * Input for creating a new custom property on an artifact type.
+ * For list/multilist types, pass the customListId the property binds to.
+ */
+export interface CreateCustomPropertyInput {
+  name: string;
+  /** Spira custom property type: 1=Text, 2=Integer, 6=List, 7=MultiList, etc. */
+  customPropertyTypeId: number;
+  /** Required for list (6) and multilist (7) types. */
+  customListId?: number;
+  artifactTypeName?: string;
+  artifactTypeId?: number;
+}
+
 /**
  * Response from the Spira project endpoint used for authentication validation.
  */
@@ -63,6 +80,12 @@ export interface SpiraApiClient {
   getProjectInfo(): Promise<{ productName: string; programName?: string }>;
   getCustomProperties(artifactTypeName: string): Promise<CustomPropertyDefinition[]>;
   getCustomListValues(customListId: number): Promise<CustomListValue[]>;
+  /** Adds one or more values to an existing custom list. Returns the values created. */
+  addCustomListValues(customListId: number, names: string[]): Promise<CustomListValue[]>;
+  /** Creates a new custom list (optionally seeded with values) and returns its id. */
+  createCustomList(name: string, values: string[]): Promise<{ customListId: number }>;
+  /** Creates a new custom property on an artifact type. Returns its property number. */
+  createCustomProperty(input: CreateCustomPropertyInput): Promise<CustomPropertyDefinition>;
   getTestCasePriorities(): Promise<TestCasePriority[]>;
   getTestCaseStatuses(): Promise<TestCaseStatus[]>;
   getTestCaseTypes(): Promise<TestCaseType[]>;
@@ -303,6 +326,83 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
   }
 
   /**
+   * Adds values to an existing custom list, one POST per value.
+   * POST /project-templates/{tid}/custom-lists/{custom_list_id}/values
+   * Returns the created value rows.
+   */
+  async function addCustomListValues(customListId: number, names: string[]): Promise<CustomListValue[]> {
+    const tid = getTemplateId();
+    const created: CustomListValue[] = [];
+    for (const name of names) {
+      const raw = await request<any>(
+        'POST',
+        `/project-templates/${tid}/custom-lists/${customListId}/values`,
+        { CustomPropertyListId: customListId, Name: name, Active: true },
+      );
+      created.push({
+        customPropertyValueId: raw?.CustomPropertyValueId ?? raw?.customPropertyValueId,
+        name: raw?.Name ?? raw?.name ?? name,
+        active: raw?.Active ?? raw?.active ?? true,
+      });
+    }
+    return created;
+  }
+
+  /**
+   * Creates a new custom list, seeded with the given values.
+   * POST /project-templates/{tid}/custom-lists
+   */
+  async function createCustomList(name: string, values: string[]): Promise<{ customListId: number }> {
+    const tid = getTemplateId();
+    const raw = await request<any>(
+      'POST',
+      `/project-templates/${tid}/custom-lists`,
+      {
+        ProjectTemplateId: tid,
+        Name: name,
+        Active: true,
+        Values: values.map(v => ({ Name: v, Active: true })),
+      },
+    );
+    return { customListId: raw?.CustomPropertyListId ?? raw?.customPropertyListId };
+  }
+
+  /**
+   * Creates a new custom property on an artifact type (default: Test Case).
+   * POST /project-templates/{tid}/custom-properties
+   */
+  async function createCustomProperty(input: CreateCustomPropertyInput): Promise<CustomPropertyDefinition> {
+    const tid = getTemplateId();
+    const artifactTypeName = input.artifactTypeName ?? 'TestCase';
+    const body: Record<string, unknown> = {
+      ProjectTemplateId: tid,
+      ArtifactTypeId: input.artifactTypeId ?? ARTIFACT_TYPE_TEST_CASE,
+      Name: input.name,
+      CustomPropertyTypeId: input.customPropertyTypeId,
+    };
+    // List/multilist properties must reference their backing list.
+    if (input.customListId != null) {
+      body.CustomList = { CustomPropertyListId: input.customListId };
+    }
+    // POST takes no artifact-type path segment — ArtifactTypeId in the body selects it.
+    const raw = await request<any>(
+      'POST',
+      `/project-templates/${tid}/custom-properties`,
+      body,
+    );
+    return {
+      customPropertyId: raw?.CustomPropertyId ?? raw?.customPropertyId,
+      propertyNumber: raw?.PropertyNumber ?? raw?.propertyNumber,
+      name: raw?.Name ?? raw?.name ?? input.name,
+      artifactTypeName,
+      customPropertyTypeId: raw?.CustomPropertyTypeId ?? input.customPropertyTypeId,
+      customPropertyTypeName: raw?.CustomPropertyTypeName ?? '',
+      customListId: raw?.CustomList?.CustomPropertyListId ?? input.customListId,
+      isRequired: raw?.IsRequired ?? false,
+    };
+  }
+
+  /**
    * Retrieves all test case priority definitions from the project template.
    */
   async function getTestCasePriorities(): Promise<TestCasePriority[]> {
@@ -524,6 +624,9 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
     getProjectInfo,
     getCustomProperties,
     getCustomListValues,
+    addCustomListValues,
+    createCustomList,
+    createCustomProperty,
     getTestCasePriorities,
     getTestCaseStatuses,
     getTestCaseTypes,

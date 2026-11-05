@@ -313,12 +313,44 @@ async function generateProvisioner(endpoint, resultId, body) {
 $('provGenerate').addEventListener('click', () =>
   generateProvisioner('/api/excel/provisioner', 'provResult'));
 
-$('zProvGenerate').addEventListener('click', () => {
-  // Fields whose "Multi-select" box is ticked are exported as `multilist`.
-  const multiSelect = [...document.querySelectorAll('.zMulti')]
-    .filter((cb) => cb.checked)
-    .map((cb) => cb.dataset.field);
-  return generateProvisioner('/api/zephyr/provisioner', 'zProvResult', { multiSelect });
+// Collects the fields whose "Multi-select" box is ticked.
+function tickedMultiSelect() {
+  return [...document.querySelectorAll('.zMulti')].filter((cb) => cb.checked).map((cb) => cb.dataset.field);
+}
+
+$('zProvGenerate').addEventListener('click', () =>
+  generateProvisioner('/api/zephyr/provisioner', 'zProvResult', { multiSelect: tickedMultiSelect() }));
+
+$('zProvApply').addEventListener('click', async () => {
+  if (!confirm('This will add the listed values and fields directly to this Spira product\'s template. Continue?')) return;
+  const resultEl = $('zProvResult');
+  resultEl.innerHTML = '<div class="status warn">Applying to Spira…</div>';
+  const r = await api.post('/api/zephyr/provision-apply', { multiSelect: tickedMultiSelect() });
+  if (!r.ok) { resultEl.innerHTML = `<div class="status err">${escapeHtml(r.error || 'Failed.')}</div>`; return; }
+  if (r.empty) { resultEl.innerHTML = `<div class="status ok">${escapeHtml(r.message)}</div>`; return; }
+
+  const res = r.result;
+  let html = `<div class="status ok">Applied to Spira: added <strong>${res.totals.valuesAdded}</strong> list value(s) ` +
+    `and created <strong>${res.totals.propertiesCreated}</strong> field(s). Re-parse to pick up the changes.</div>`;
+  if (res.valuesAdded.length) {
+    html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">Values added</h3>' +
+      '<table><thead><tr><th>Property</th><th>Values</th></tr></thead><tbody>' +
+      res.valuesAdded.map((v) =>
+        `<tr><td>${escapeHtml(v.property)}</td><td>${escapeHtml(v.values.join(', '))}</td></tr>`).join('') +
+      '</tbody></table>';
+  }
+  if (res.propertiesCreated.length) {
+    html += '<h3 style="font-size:14px;color:var(--teal);margin:12px 0 6px;">Fields created</h3>' +
+      '<table><thead><tr><th>Name</th><th>Type</th></tr></thead><tbody>' +
+      res.propertiesCreated.map((p) =>
+        `<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.type)}</td></tr>`).join('') +
+      '</tbody></table>';
+  }
+  if (res.warnings && res.warnings.length) {
+    html += '<div class="status warn" style="margin-top:10px;">' +
+      res.warnings.map(escapeHtml).join('<br>') + '</div>';
+  }
+  resultEl.innerHTML = html;
 });
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
