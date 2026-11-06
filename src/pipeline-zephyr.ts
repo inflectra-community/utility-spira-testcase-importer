@@ -389,6 +389,45 @@ export function fuzzyMatchName<T>(
 }
 
 /**
+ * Canonical comparison key for a list value: case-insensitive, whitespace-collapsed,
+ * and with spaces around "/" removed — so "FB03/ VL03N" and "FB03/VL03N", or
+ * "ME21N" and "ME21n", compare equal. Used to match AND to de-duplicate values.
+ */
+export function listValueKey(s: string): string {
+  return s
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\/\s*/g, '/')
+    .toLowerCase();
+}
+
+/**
+ * Strict matcher for custom LIST values (as opposed to field names / priorities,
+ * where the looser fuzzyMatchName cascade is what we want).
+ *
+ * List values are often codes: "VL02N" and "VL02" are different SAP transactions,
+ * so the "contains" shortcuts in fuzzyMatchName are wrong here — they silently
+ * mapped VL02N onto VL02 and never flagged it as missing. Only two rules apply:
+ *   1. same value after normalisation (case / whitespace)
+ *   2. the list entry carries a numeric ordering prefix, e.g. "2 - High" ↔ "High"
+ */
+export function matchListValue<T>(
+  value: string,
+  candidates: T[],
+  getName: (item: T) => string,
+  isActive?: (item: T) => boolean,
+): T | undefined {
+  const key = listValueKey(value);
+  const pool = isActive ? candidates.filter(isActive) : candidates;
+
+  const exact = pool.find(c => listValueKey(getName(c)) === key);
+  if (exact) return exact;
+
+  const stripPrefix = (s: string) => listValueKey(s.replace(/^\s*\d+\s*[-–—]\s*/, ''));
+  return pool.find(c => stripPrefix(getName(c)) === key);
+}
+
+/**
  * Splits a Zephyr custom-field value into individual values for list resolution.
  *
  * Zephyr stores multi-value list fields as a single comma-separated string
@@ -520,7 +559,7 @@ export function resolveZephyrMetadata(
           const resolvedIds: number[] = [];
           for (const raw of rawValues) {
             const valueMatch = listValues
-              ? fuzzyMatchName(raw, listValues, v => v.name, v => v.active)
+              ? matchListValue(raw, listValues, v => v.name, v => v.active)
               : undefined;
             if (valueMatch) {
               resolvedIds.push(valueMatch.customPropertyValueId);
@@ -602,7 +641,27 @@ export interface ZephyrMissingListValues {
   multiValued: boolean;
 }
 
+/**
+ * Values that differ only by case or spacing ("ME21N" / "ME21n", "FB03/ VL03N" /
+ * "FB03/VL03N") — near-duplicates that would otherwise become separate list entries.
+ */
+export interface ZephyrDuplicateGroup {
+  /** The Spira field (or new field) the values belong to. */
+  property: string;
+  /**
+   * `source`   — the Zephyr data spells the same value more than one way
+   *              (these are merged into one list entry when provisioning).
+   * `template` — the Spira list ALREADY contains near-duplicate entries
+   *              (reported only; never changed).
+   */
+  where: 'source' | 'template';
+  /** The distinct spellings, e.g. ["ME21N", "ME21n"]. */
+  values: string[];
+}
+
 export interface ZephyrGapAnalysis {
+  /** Near-duplicate values found in the source data and in existing Spira lists. */
+  duplicates: ZephyrDuplicateGroup[];
   newProperties: ZephyrNewProperty[];
   missingListValues: ZephyrMissingListValues[];
   /**
@@ -631,13 +690,27 @@ export function analyzeZephyrGaps(
   metadata: TemplateMetadata,
 ): ZephyrGapAnalysis {
   // Accumulate, per unmatched CP name, the set of values seen.
-  const newProps = new Map<string, Set<string>>();
+  // Distinct values per new property, keyed by listValueKey so "ME21N"/"ME21n" or
+  // "FB03/ VL03N"/"FB03/VL03N" collapse to one entry (first spelling wins).
+  const newProps = new Map<string, Map<string, string>>();
   // Total values observed (with repeats) per new property, for the cardinality ratio.
   const newPropOccurrences = new Map<string, number>();
   // Tracks whether ANY row's raw value for a property name was comma-separated.
   const multiValuedProps = new Set<string>();
+  // Every spelling seen per list-like property, grouped by normalised key — a group
+  // with more than one spelling is a near-duplicate in the source data.
+  const spellings = new Map<string, Map<string, Set<string>>>();
+  const noteSpelling = (prop: string, value: string) => {
+    if (!spellings.has(prop)) spellings.set(prop, new Map());
+    const byKey = spellings.get(prop)!;
+    const k = listValueKey(value);
+    if (!byKey.has(k)) byKey.set(k, new Set());
+    byKey.get(k)!.add(value);
+  };
+  // Existing list properties the source touches, so their lists can be checked too.
+  const touchedLists = new Map<string, number>(); // property name → customListId
   // Per existing list CP name, the set of values seen that aren't in the list.
-  const missingByProp = new Map<string, { def: typeof metadata.customProperties[number]; missing: Set<string> }>();
+  const missingByProp = new Map<string, { def: typeof metadata.customProperties[number]; missing: Map<string, string> }>();
   const missingComponents = new Set<string>();
   const unprovisionable = new Set<string>();
 
@@ -671,10 +744,19 @@ export function analyzeZephyrGaps(
       if (values.length > 1) multiValuedProps.add(propKey);
       // A field that's already multi-select in the template stays multi-select.
       if (cpDef?.customPropertyTypeId === 7) multiValuedProps.add(propKey);
+      // Record spellings for list-like fields: brand-new fields (which may become
+      // lists) and existing list / multi-list fields.
+      const listLike = !cpDef || cpDef.customPropertyTypeId === 6 || cpDef.customPropertyTypeId === 7;
+      if (listLike) for (const v of values) noteSpelling(propKey, v);
+      if (cpDef && listLike && cpDef.customListId) touchedLists.set(cpDef.name, cpDef.customListId);
+
       if (!cpDef) {
         // New property — accumulate each of its values.
-        if (!newProps.has(cpName)) newProps.set(cpName, new Set());
-        for (const v of values) newProps.get(cpName)!.add(v);
+        if (!newProps.has(cpName)) newProps.set(cpName, new Map());
+        for (const v of values) {
+          const k = listValueKey(v);
+          if (!newProps.get(cpName)!.has(k)) newProps.get(cpName)!.set(k, v);
+        }
         newPropOccurrences.set(cpName, (newPropOccurrences.get(cpName) ?? 0) + values.length);
         continue;
       }
@@ -684,12 +766,14 @@ export function analyzeZephyrGaps(
       if (isListType && cpDef.customListId) {
         const listValues = metadata.customLists.get(cpDef.customListId);
         for (const value of values) {
-          const inList = listValues && fuzzyMatchName(value, listValues, v => v.name, v => v.active);
+          const inList = listValues && matchListValue(value, listValues, v => v.name, v => v.active);
           if (!inList) {
             if (!missingByProp.has(cpDef.name)) {
-              missingByProp.set(cpDef.name, { def: cpDef, missing: new Set() });
+              missingByProp.set(cpDef.name, { def: cpDef, missing: new Map() });
             }
-            missingByProp.get(cpDef.name)!.missing.add(value);
+            const missing = missingByProp.get(cpDef.name)!.missing;
+            const k = listValueKey(value);
+            if (!missing.has(k)) missing.set(k, value);
           }
         }
       }
@@ -698,7 +782,7 @@ export function analyzeZephyrGaps(
 
   const newProperties: ZephyrNewProperty[] = [...newProps.entries()].map(([name, values]) => ({
     name,
-    uniqueValues: [...values],
+    uniqueValues: [...values.values()],
     rowCount: newPropOccurrences.get(name) ?? values.size,
     multiValued: multiValuedProps.has(name),
   }));
@@ -708,12 +792,33 @@ export function analyzeZephyrGaps(
     return {
       propertyName: def.name,
       existingValues: listValues.map(v => v.name),
-      missingValues: [...missing],
+      missingValues: [...missing.values()],
       multiValued: multiValuedProps.has(def.name),
     };
   });
 
+  // Near-duplicate detection.
+  const duplicates: ZephyrDuplicateGroup[] = [];
+  //  - in the source: one value spelled more than one way
+  for (const [property, byKey] of spellings) {
+    for (const forms of byKey.values()) {
+      if (forms.size > 1) duplicates.push({ property, where: 'source', values: [...forms].sort() });
+    }
+  }
+  //  - in Spira: the existing list already holds near-duplicate entries
+  for (const [property, listId] of touchedLists) {
+    const groups = new Map<string, string[]>();
+    for (const v of metadata.customLists.get(listId) ?? []) {
+      const k = listValueKey(v.name);
+      groups.set(k, [...(groups.get(k) ?? []), v.name]);
+    }
+    for (const forms of groups.values()) {
+      if (forms.length > 1) duplicates.push({ property, where: 'template', values: [...forms].sort() });
+    }
+  }
+
   return {
+    duplicates,
     newProperties,
     missingListValues,
     missingComponents: [...missingComponents].sort(),

@@ -44,6 +44,7 @@ function metadata(): TemplateMetadata {
 
 function gaps(partial: Partial<ZephyrGapAnalysis>): ZephyrGapAnalysis {
   return {
+    duplicates: [],
     newProperties: [],
     missingListValues: [],
     missingComponents: [],

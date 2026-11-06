@@ -415,11 +415,12 @@ function renderFieldMapping(rows) {
     'needs-values': 'needs values',
     'new-field': 'new field',
     'manual': 'manual fix',
+    'duplicates': 'near-duplicates',
     'ok': 'resolves',
   };
   const body = '<table class="map-table"><thead><tr><th>Field</th><th>Status</th><th>Detail</th></tr></thead><tbody>' +
     rows.map((r) => {
-      const cls = r.status === 'needs-values' || r.status === 'manual' ? 'map-warn' : '';
+      const cls = ['needs-values', 'manual', 'duplicates'].includes(r.status) ? 'map-warn' : '';
       const vals = r.values && r.values.length
         ? `<br><span class="muted">${escapeHtml(r.values.slice(0, 12).join(', '))}${r.values.length > 12 ? ` …(+${r.values.length - 12})` : ''}</span>`
         : '';

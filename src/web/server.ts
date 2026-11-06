@@ -162,13 +162,42 @@ function buildSourceMapping(
  * view can show which source fields resolve cleanly and which have values the
  * template is missing — grouped per field, not as a flat warning list.
  */
+type MappingStatus = 'ok' | 'needs-values' | 'new-field' | 'manual' | 'duplicates';
+
 function buildFieldMappingSummary(gaps: ZephyrGapAnalysis): Array<{
   field: string;
-  status: 'ok' | 'needs-values' | 'new-field' | 'manual';
+  status: MappingStatus;
   detail: string;
   values?: string[];
 }> {
-  const rows: Array<{ field: string; status: 'ok' | 'needs-values' | 'new-field' | 'manual'; detail: string; values?: string[] }> = [];
+  const rows: Array<{ field: string; status: MappingStatus; detail: string; values?: string[] }> = [];
+
+  // Near-duplicate values (same value, different case/spacing). Group by field so
+  // each field gets one row listing every duplicated value.
+  const dupsByField = new Map<string, { source: string[]; template: string[] }>();
+  for (const g of gaps.duplicates) {
+    const entry = dupsByField.get(g.property) ?? { source: [], template: [] };
+    entry[g.where].push(g.values.map(v => `"${v}"`).join(' / '));
+    dupsByField.set(g.property, entry);
+  }
+  for (const [field, d] of dupsByField) {
+    if (d.source.length) {
+      rows.push({
+        field,
+        status: 'duplicates',
+        detail: `${d.source.length} value(s) spelled more than one way in the source — merged into one entry`,
+        values: d.source,
+      });
+    }
+    if (d.template.length) {
+      rows.push({
+        field,
+        status: 'duplicates',
+        detail: `${d.template.length} near-duplicate entr${d.template.length === 1 ? 'y' : 'ies'} already in the Spira list — not changed`,
+        values: d.template,
+      });
+    }
+  }
 
   for (const m of gaps.missingListValues) {
     rows.push({

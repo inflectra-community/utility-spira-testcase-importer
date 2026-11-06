@@ -7,7 +7,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { fuzzyMatchName, analyzeZephyrGaps, resolveZephyrMetadata, splitMultiValue } from './pipeline-zephyr.js';
+import {
+  fuzzyMatchName,
+  analyzeZephyrGaps,
+  resolveZephyrMetadata,
+  splitMultiValue,
+  listValueKey,
+  matchListValue,
+} from './pipeline-zephyr.js';
 import type { TransformedTestCase } from './types/transform.js';
 import type { TemplateMetadata } from './types/spira.js';
 
@@ -277,6 +284,137 @@ describe('resolveZephyrMetadata — multi-value custom properties', () => {
     const tcs = [zephyrTc('T1', [{ name: 'Country Code', value: 'XX, YY' }])];
     resolveZephyrMetadata(tcs, multiListMetadata());
     expect(tcs[0].customProperties[0]).toEqual({ propertyNumber: 5, value: 'XX, YY' });
+  });
+});
+
+// --- strict list-value matching ---
+
+describe('listValueKey', () => {
+  it('ignores case and whitespace, including stray spaces around a slash', () => {
+    expect(listValueKey('ME21N')).toBe(listValueKey('me21n'));
+    expect(listValueKey('FB03/ VL03N')).toBe(listValueKey('FB03/VL03N'));
+    expect(listValueKey('  FB03 /  VL03N ')).toBe(listValueKey('FB03/VL03N'));
+  });
+
+  it('keeps genuinely different values different', () => {
+    expect(listValueKey('VL02')).not.toBe(listValueKey('VL02N'));
+    expect(listValueKey('FB03')).not.toBe(listValueKey('FB03/MIGO'));
+  });
+});
+
+describe('matchListValue', () => {
+  const entries = [
+    { name: 'VL02', active: true },
+    { name: '2 - High', active: true },
+    { name: 'ME21N', active: true },
+    { name: 'GONE', active: false },
+  ];
+  const find = (v: string) => matchListValue(v, entries, e => e.name, e => e.active)?.name;
+
+  it('matches case- and whitespace-insensitively', () => {
+    expect(find('me21n')).toBe('ME21N');
+  });
+
+  it('does NOT map a longer code onto a shorter one (VL02N is not VL02)', () => {
+    expect(find('VL02N')).toBeUndefined();
+    expect(find('VL02n')).toBeUndefined();
+    expect(find('VL02n / background')).toBeUndefined();
+  });
+
+  it('still honours a numeric ordering prefix ("High" ↔ "2 - High")', () => {
+    expect(find('High')).toBe('2 - High');
+  });
+
+  it('skips inactive entries', () => {
+    expect(find('GONE')).toBeUndefined();
+  });
+});
+
+describe('analyzeZephyrGaps — duplicate detection', () => {
+  it('flags a code the source spells two ways, and merges them into ONE missing value', () => {
+    const tcs = [
+      zephyrTc('T1', [{ name: 'Transaction Code', value: 'ME21N' }]),
+      zephyrTc('T2', [{ name: 'Transaction Code', value: 'ME21n' }]),
+    ];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+
+    expect(gaps.missingListValues).toHaveLength(1);
+    expect(gaps.missingListValues[0].missingValues).toEqual(['ME21N']); // first spelling wins
+    expect(gaps.duplicates).toContainEqual({
+      property: 'Transaction Code', where: 'source', values: ['ME21N', 'ME21n'],
+    });
+  });
+
+  it('treats a stray space around a slash as the same value', () => {
+    const tcs = [
+      zephyrTc('T1', [{ name: 'Transaction Code', value: 'FB03/ VL03N' }]),
+      zephyrTc('T2', [{ name: 'Transaction Code', value: 'FB03/VL03N' }]),
+    ];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    expect(gaps.missingListValues[0].missingValues).toHaveLength(1);
+    expect(gaps.duplicates.filter(d => d.where === 'source')).toHaveLength(1);
+  });
+
+  it('flags a longer code as MISSING rather than absorbing it into an existing shorter one', () => {
+    // List has VA01; "VA01N" is a different code and must be reported missing.
+    const tcs = [zephyrTc('T1', [{ name: 'Transaction Code', value: 'VA01N' }])];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    expect(gaps.missingListValues[0].missingValues).toEqual(['VA01N']);
+  });
+
+  it('detects near-duplicates ALREADY in the Spira list, without changing them', () => {
+    const md = metadata({
+      customLists: new Map([[10, [
+        { customPropertyValueId: 1, name: 'ME21N', active: true },
+        { customPropertyValueId: 2, name: 'ME21n', active: true },
+        { customPropertyValueId: 3, name: 'VA01', active: true },
+      ]]]),
+    });
+    const tcs = [zephyrTc('T1', [{ name: 'Transaction Code', value: 'VA01' }])];
+    const gaps = analyzeZephyrGaps(tcs, md);
+    expect(gaps.duplicates).toContainEqual({
+      property: 'Transaction Code', where: 'template', values: ['ME21N', 'ME21n'],
+    });
+    expect(gaps.missingListValues).toHaveLength(0);
+  });
+
+  it('reports nothing when values are spelled consistently', () => {
+    const tcs = [
+      zephyrTc('T1', [{ name: 'Transaction Code', value: 'VA01' }]),
+      zephyrTc('T2', [{ name: 'Transaction Code', value: 'VA01' }]),
+    ];
+    expect(analyzeZephyrGaps(tcs, metadata()).duplicates).toEqual([]);
+  });
+
+  it('merges spelling variants for a brand-new field too', () => {
+    const tcs = [
+      zephyrTc('T1', [{ name: 'Module', value: 'SD' }]),
+      zephyrTc('T2', [{ name: 'Module', value: 'sd' }]),
+      zephyrTc('T3', [{ name: 'Module', value: 'FI' }]),
+    ];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    const mod = gaps.newProperties.find(p => p.name === 'Module')!;
+    expect(mod.uniqueValues.sort()).toEqual(['FI', 'SD']);
+    expect(gaps.duplicates).toContainEqual({ property: 'Module', where: 'source', values: ['SD', 'sd'] });
+  });
+});
+
+describe('resolveZephyrMetadata — strict list values', () => {
+  it('resolves a spacing/case variant to the existing entry, but not a longer code', () => {
+    const md = metadata({
+      customLists: new Map([[10, [
+        { customPropertyValueId: 7, name: 'FB03/VL03N', active: true },
+        { customPropertyValueId: 8, name: 'VA01', active: true },
+      ]]]),
+    });
+    const tcs = [
+      zephyrTc('T1', [{ name: 'Transaction Code', value: 'FB03/ VL03N' }]),
+      zephyrTc('T2', [{ name: 'Transaction Code', value: 'VA01N' }]),
+    ];
+    const warnings = resolveZephyrMetadata(tcs, md);
+
+    expect(tcs[0].customProperties[0].value).toBe(7);          // spacing variant → existing entry
+    expect(warnings.some(w => w.includes('"VA01N" not in list'))).toBe(true); // not absorbed into VA01
   });
 });
 
