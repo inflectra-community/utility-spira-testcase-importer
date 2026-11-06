@@ -135,12 +135,14 @@ export async function applyProvisioning(
     const typeName = resolved.type;
     const typeId = PROP_TYPE[typeName as keyof typeof PROP_TYPE] ?? PROP_TYPE.text;
 
+    let customListIdForWarning: number | undefined;
     try {
       let customListId: number | undefined;
       if (typeName === 'list' || typeName === 'multilist') {
         const values = resolved.values ?? np.uniqueValues;
         const createdList = await client.createCustomList(np.name, values);
         customListId = createdList.customListId;
+        customListIdForWarning = customListId;
         await client.createCustomProperty({ name: np.name, customPropertyTypeId: typeId, customListId });
         result.propertiesCreated.push({ name: np.name, type: typeName, values });
       } else {
@@ -150,8 +152,13 @@ export async function applyProvisioning(
       result.totals.propertiesCreated += 1;
       logger.info(`Created custom property "${np.name}" (${typeName}).`);
     } catch (err) {
+      // The list (if any) is created before the property, so a failed property
+      // leaves that list behind unbound. Say so, with its id, so it can be removed.
+      const leftover = customListIdForWarning !== undefined
+        ? ` Its custom list (#${customListIdForWarning}) was created but is not attached to any field — remove it in Administration → Custom Lists.`
+        : '';
       result.warnings.push(
-        `Could not create property "${np.name}": ${err instanceof Error ? err.message : String(err)}`,
+        `Could not create property "${np.name}": ${err instanceof Error ? err.message : String(err)}.${leftover}`,
       );
     }
   }

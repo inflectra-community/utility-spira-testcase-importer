@@ -387,14 +387,39 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
   async function createCustomProperty(input: CreateCustomPropertyInput): Promise<CustomPropertyDefinition> {
     const tid = getTemplateId();
     const artifactTypeName = input.artifactTypeName ?? 'TestCase';
+    const isList = input.customPropertyTypeId === 6 || input.customPropertyTypeId === 7;
+
+    // A list property must be bound to its list. Without one, Spira's test case
+    // page throws a NullReferenceException.
+    if (isList && input.customListId == null) {
+      throw new Error(`Refusing to create list property "${input.name}" without a custom list.`);
+    }
+
+    // Spira does NOT pick a slot when PropertyNumber is omitted: it stores 0
+    // ("Custom_00"), outside the valid 1–30 range, and the record is unusable —
+    // every test case in the product then fails to open. So choose the first
+    // free slot ourselves, from the template as it is right now.
+    const existing = await request<any[]>(
+      'GET',
+      `/project-templates/${tid}/custom-properties/${artifactTypeName}`,
+    );
+    const used = new Set((existing ?? []).map(p => p.PropertyNumber ?? p.propertyNumber));
+    let propertyNumber: number | undefined;
+    for (let n = 1; n <= 30; n++) {
+      if (!used.has(n)) { propertyNumber = n; break; }
+    }
+    if (propertyNumber === undefined) {
+      throw new Error(`No free custom property slot (1–30) left for ${artifactTypeName} in this template.`);
+    }
+
     const body: Record<string, unknown> = {
       ProjectTemplateId: tid,
       ArtifactTypeId: input.artifactTypeId ?? ARTIFACT_TYPE_TEST_CASE,
       Name: input.name,
       CustomPropertyTypeId: input.customPropertyTypeId,
+      PropertyNumber: propertyNumber,
     };
-    // List/multilist properties must reference their backing list.
-    if (input.customListId != null) {
+    if (isList) {
       body.CustomList = { CustomPropertyListId: input.customListId };
     }
     // POST takes no artifact-type path segment — ArtifactTypeId in the body selects it.
@@ -403,16 +428,31 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
       `/project-templates/${tid}/custom-properties`,
       body,
     );
-    return {
+
+    const created: CustomPropertyDefinition = {
       customPropertyId: raw?.CustomPropertyId ?? raw?.customPropertyId,
       propertyNumber: raw?.PropertyNumber ?? raw?.propertyNumber,
       name: raw?.Name ?? raw?.name ?? input.name,
       artifactTypeName,
       customPropertyTypeId: raw?.CustomPropertyTypeId ?? input.customPropertyTypeId,
       customPropertyTypeName: raw?.CustomPropertyTypeName ?? '',
-      customListId: raw?.CustomList?.CustomPropertyListId ?? input.customListId,
+      customListId: raw?.CustomList?.CustomPropertyListId,
       isRequired: raw?.IsRequired ?? false,
     };
+
+    // Don't trust the 200: check Spira stored what we asked for, so a bad record
+    // is reported straight away instead of breaking the test case page later.
+    const badSlot = !(created.propertyNumber >= 1 && created.propertyNumber <= 30);
+    const unbound = isList && created.customListId !== input.customListId;
+    if (badSlot || unbound) {
+      throw new Error(
+        `Spira created custom property "${input.name}" incorrectly ` +
+        `(slot ${created.propertyNumber}, list ${created.customListId ?? 'none'}; ` +
+        `expected slot ${propertyNumber}${isList ? `, list ${input.customListId}` : ''}). ` +
+        `Fix or delete it in Administration → Custom Properties before importing.`,
+      );
+    }
+    return created;
   }
 
   /**

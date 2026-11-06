@@ -297,3 +297,113 @@ describe('createSpiraClient', () => {
     });
   });
 });
+
+// --- createCustomProperty: must always send a valid slot and bind lists ---
+//
+// Regression: the request used to omit PropertyNumber. Spira then stored 0
+// ("Custom_00", outside 1–30) and no list binding, and every test case in the
+// product failed to open with a NullReferenceException.
+
+describe('createCustomProperty', () => {
+  type Call = { method: string; url: string; body?: any };
+
+  /** A fake Spira for the custom-property endpoints. */
+  function mockSpira(opts: {
+    existingSlots?: number[];
+    /** Make the POST response report this instead of echoing the request. */
+    respondWith?: Record<string, unknown>;
+  }) {
+    const calls: Call[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, url, body });
+      let payload: unknown = {};
+      if (method === 'GET' && url.endsWith('/projects/5')) {
+        payload = { ProjectId: 5, Name: 'P', ProjectTemplateId: 9 };
+      } else if (method === 'GET' && url.includes('/custom-properties/TestCase')) {
+        payload = (opts.existingSlots ?? []).map(n => ({ PropertyNumber: n, Name: `F${n}` }));
+      } else if (method === 'POST' && url.endsWith('/custom-properties')) {
+        payload = opts.respondWith ?? {
+          CustomPropertyId: 77,
+          PropertyNumber: body.PropertyNumber,
+          Name: body.Name,
+          CustomPropertyTypeId: body.CustomPropertyTypeId,
+          CustomList: body.CustomList ?? null,
+        };
+      }
+      return new Response(JSON.stringify(payload), { status: 200 });
+    }));
+    return calls;
+  }
+
+  async function connected() {
+    const client = createSpiraClient(createTestConfig(), createMockLogger());
+    await client.authenticate();
+    return client;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends PropertyNumber = first free slot, and binds the list', async () => {
+    const calls = mockSpira({ existingSlots: [1, 2, 4] });
+    const client = await connected();
+    const created = await client.createCustomProperty({ name: 'Country', customPropertyTypeId: 7, customListId: 82 });
+
+    const post = calls.find(c => c.method === 'POST')!;
+    expect(post.url).toContain('/project-templates/9/custom-properties');
+    expect(post.body.PropertyNumber).toBe(3);
+    expect(post.body.CustomList).toEqual({ CustomPropertyListId: 82 });
+    expect(created.propertyNumber).toBe(3);
+    expect(created.customListId).toBe(82);
+  });
+
+  it('uses slot 1 on an empty template (never 0)', async () => {
+    const calls = mockSpira({ existingSlots: [] });
+    const client = await connected();
+    await client.createCustomProperty({ name: 'Notes', customPropertyTypeId: 1 });
+    expect(calls.find(c => c.method === 'POST')!.body.PropertyNumber).toBe(1);
+  });
+
+  it('does not send a list binding for a text property', async () => {
+    const calls = mockSpira({ existingSlots: [] });
+    const client = await connected();
+    await client.createCustomProperty({ name: 'Notes', customPropertyTypeId: 1 });
+    expect(calls.find(c => c.method === 'POST')!.body.CustomList).toBeUndefined();
+  });
+
+  it('refuses to create a list property without a list (no POST is made)', async () => {
+    const calls = mockSpira({ existingSlots: [] });
+    const client = await connected();
+    await expect(client.createCustomProperty({ name: 'Bad', customPropertyTypeId: 6 }))
+      .rejects.toThrow(/without a custom list/);
+    expect(calls.some(c => c.method === 'POST')).toBe(false);
+  });
+
+  it('fails clearly when all 30 slots are taken', async () => {
+    mockSpira({ existingSlots: Array.from({ length: 30 }, (_, i) => i + 1) });
+    const client = await connected();
+    await expect(client.createCustomProperty({ name: 'X', customPropertyTypeId: 1 }))
+      .rejects.toThrow(/No free custom property slot/);
+  });
+
+  it('rejects a response that stored slot 0 — the record that broke the test case page', async () => {
+    mockSpira({
+      existingSlots: [],
+      respondWith: { CustomPropertyId: 195, PropertyNumber: 0, Name: 'Transaction Code', CustomPropertyTypeId: 6, CustomList: null },
+    });
+    const client = await connected();
+    await expect(client.createCustomProperty({ name: 'Transaction Code', customPropertyTypeId: 6, customListId: 81 }))
+      .rejects.toThrow(/created custom property "Transaction Code" incorrectly/);
+  });
+
+  it('rejects a response where the list binding was dropped', async () => {
+    mockSpira({
+      existingSlots: [],
+      respondWith: { CustomPropertyId: 9, PropertyNumber: 1, Name: 'Country', CustomPropertyTypeId: 7, CustomList: null },
+    });
+    const client = await connected();
+    await expect(client.createCustomProperty({ name: 'Country', customPropertyTypeId: 7, customListId: 82 }))
+      .rejects.toThrow(/list none/);
+  });
+});
