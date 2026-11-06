@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   inferFieldType,
+  resolveNewFieldType,
   generateProvisionerConfig,
   extractColumnInfo,
   findMissingListValues,
@@ -157,16 +158,98 @@ describe('generateProvisionerConfig', () => {
     expect(field.values).toEqual(['APAC', 'EMEA']);
   });
 
-  it('does not turn a non-list column (e.g. integer) into multilist just because multiValued', () => {
+  it('never makes a multi-valued scalar column a multilist or an integer — it falls back to text', () => {
     const config = generateProvisionerConfig({
       programName: 'Prog',
       productName: 'Prod',
-      newColumns: [{ columnName: 'Qty', uniqueValues: ['1', '2'], rowCount: 10, multiValued: true }],
+      newColumns: [
+        { columnName: 'Qty', uniqueValues: ['1', '2'], rowCount: 10, multiValued: true },
+        { columnName: 'Single', uniqueValues: ['1', '2'], rowCount: 10 },
+      ],
       missingValues: [],
     }) as any;
 
-    const field = config.program.products[0].customFields.testCases.find((f: any) => f.name === 'Qty');
-    expect(field.type).toBe('integer');
+    const fields = config.program.products[0].customFields.testCases;
+    // Several values per cell can't fit an integer field…
+    expect(fields.find((f: any) => f.name === 'Qty').type).toBe('text');
+    // …but a genuinely single-valued numeric column is still an integer.
+    expect(fields.find((f: any) => f.name === 'Single').type).toBe('integer');
+  });
+});
+
+describe('resolveNewFieldType — per-field type switch', () => {
+  // 40 distinct, longish, high-variability values: inference calls this free text.
+  const codes = Array.from({ length: 40 }, (_, i) => `ZTX${String(i).padStart(3, '0')}/ALT_${i * 7}`);
+  const transactionCodes = { columnName: 'Transaction Code', uniqueValues: codes, rowCount: 60 };
+
+  it('auto lets inference decide (high-cardinality codes → text)', () => {
+    const r = resolveNewFieldType(transactionCodes, 20);
+    expect(r.type).toBe('text');
+    expect(r.values).toBeUndefined();
+  });
+
+  it('forceType text keeps a list-like column as free text, with no values', () => {
+    const r = resolveNewFieldType(
+      { columnName: 'Country', uniqueValues: ['DE', 'FR'], rowCount: 30, forceType: 'text' },
+      20,
+    );
+    expect(r.type).toBe('text');
+    expect(r.values).toBeUndefined();
+  });
+
+  it('forceType list turns free-text-looking data into a single-select list of the distinct values', () => {
+    const r = resolveNewFieldType({ ...transactionCodes, forceType: 'list' }, 20);
+    expect(r.type).toBe('list');
+    expect(r.values).toHaveLength(40);
+    expect(r.values).toEqual([...codes].sort());
+  });
+
+  it('forceType multilist produces a multi-select list', () => {
+    const r = resolveNewFieldType({ ...transactionCodes, forceType: 'multilist' }, 20);
+    expect(r.type).toBe('multilist');
+    expect(r.values).toHaveLength(40);
+  });
+
+  it('auto never makes a multi-valued column an integer (cells like "6021, 6022" would fail)', () => {
+    const plant = { columnName: 'Plant Number', uniqueValues: ['6021', '6022', '6030'], rowCount: 30 };
+    expect(resolveNewFieldType(plant, 20).type).toBe('integer'); // single-valued: integer is right
+    expect(resolveNewFieldType({ ...plant, multiValued: true }, 20).type).toBe('text');
+  });
+
+  it('auto picks a select list for a small controlled vocabulary seen many times', () => {
+    // 7 distinct values over 61 occurrences, like the Module field.
+    const module_ = { columnName: 'Module', uniqueValues: ['SD', 'FI', 'MM', 'WM', 'QM', 'PM', 'CO'], rowCount: 61 };
+    const r = resolveNewFieldType(module_, 20);
+    expect(r.type).toBe('list');
+    expect(r.values).toHaveLength(7);
+  });
+
+  it('forceType auto behaves exactly like no override (multiValued still promotes a list)', () => {
+    const col = { columnName: 'Region', uniqueValues: ['EMEA', 'APAC'], rowCount: 20, multiValued: true };
+    expect(resolveNewFieldType({ ...col, forceType: 'auto' }, 20)).toEqual(resolveNewFieldType(col, 20));
+    expect(resolveNewFieldType(col, 20).type).toBe('multilist');
+  });
+});
+
+describe('generateProvisionerConfig — forceType', () => {
+  it('writes the forced type into the structure file', () => {
+    const config = generateProvisionerConfig({
+      programName: 'Prog',
+      productName: 'Prod',
+      newColumns: [
+        { columnName: 'Transaction Code', uniqueValues: ['VA01', 'VL10B'], rowCount: 10, forceType: 'text' },
+        { columnName: 'Country', uniqueValues: ['DE', 'FR'], rowCount: 10, forceType: 'multilist' },
+      ],
+      missingValues: [],
+    }) as any;
+
+    const fields = config.program.products[0].customFields.testCases;
+    const tx = fields.find((f: any) => f.name === 'Transaction Code');
+    const country = fields.find((f: any) => f.name === 'Country');
+    expect(tx.type).toBe('text');
+    expect(tx.values).toBeUndefined();
+    expect(country.type).toBe('multilist');
+    expect(country.values).toEqual(['DE', 'FR']);
   });
 });
 

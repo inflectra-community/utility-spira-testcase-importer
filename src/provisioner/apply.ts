@@ -19,7 +19,7 @@ import type { SpiraApiClient } from '../spira/client.js';
 import type { Logger } from '../logger/index.js';
 import type { TemplateMetadata } from '../types/spira.js';
 import type { ZephyrGapAnalysis } from '../pipeline-zephyr.js';
-import { inferFieldType } from './index.js';
+import { resolveNewFieldType, type FieldMode } from './index.js';
 
 export interface ProvisionApplyInput {
   gaps: ZephyrGapAnalysis;
@@ -29,6 +29,12 @@ export interface ProvisionApplyInput {
    * the per-field `multiValued` default from the gap analysis.
    */
   multiSelect?: string[];
+  /**
+   * Per-field type choice for fields that will be CREATED (name → mode).
+   * Absent or `auto` lets inference decide. Has no effect on fields that
+   * already exist: their type is fixed at creation and always wins.
+   */
+  fieldTypes?: Record<string, FieldMode>;
   /** Max distinct values before a NEW field is treated as text rather than a list. */
   listValueThreshold?: number;
 }
@@ -66,7 +72,7 @@ export async function applyProvisioning(
   input: ProvisionApplyInput,
   logger: Logger,
 ): Promise<ProvisionApplyResult> {
-  const { gaps, metadata, multiSelect, listValueThreshold = 20 } = input;
+  const { gaps, metadata, multiSelect, fieldTypes, listValueThreshold = 20 } = input;
   const result: ProvisionApplyResult = {
     valuesAdded: [],
     propertiesCreated: [],
@@ -113,19 +119,26 @@ export async function applyProvisioning(
 
   // 2. New properties the template lacks → create list (if needed) + property.
   for (const np of gaps.newProperties) {
-    const inferred = inferFieldType(
-      { columnName: np.name, uniqueValues: np.uniqueValues, rowCount: np.rowCount },
+    // An explicit per-field choice wins; otherwise the legacy multiSelect list /
+    // data default decides list-vs-multilist for fields inferred to be lists.
+    const mode: FieldMode = fieldTypes?.[np.name] ?? 'auto';
+    const resolved = resolveNewFieldType(
+      {
+        columnName: np.name,
+        uniqueValues: np.uniqueValues,
+        rowCount: np.rowCount,
+        multiValued: wantsMulti(np.name, np.multiValued),
+        forceType: mode,
+      },
       listValueThreshold,
     );
-    const isListLike = inferred.type === 'list';
-    const multi = isListLike && wantsMulti(np.name, np.multiValued);
-    const typeName = multi ? 'multilist' : inferred.type;
+    const typeName = resolved.type;
     const typeId = PROP_TYPE[typeName as keyof typeof PROP_TYPE] ?? PROP_TYPE.text;
 
     try {
       let customListId: number | undefined;
       if (typeName === 'list' || typeName === 'multilist') {
-        const values = inferred.values ?? np.uniqueValues;
+        const values = resolved.values ?? np.uniqueValues;
         const createdList = await client.createCustomList(np.name, values);
         customListId = createdList.customListId;
         await client.createCustomProperty({ name: np.name, customPropertyTypeId: typeId, customListId });

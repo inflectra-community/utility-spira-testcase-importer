@@ -143,6 +143,19 @@ describe('analyzeZephyrGaps', () => {
     expect(gaps.missingComponents).toHaveLength(0);
   });
 
+  it('rowCount counts every observed value (with repeats), not just the distinct ones', () => {
+    const tcs = [
+      zephyrTc('T1', [{ name: 'Module', value: 'SD' }]),
+      zephyrTc('T2', [{ name: 'Module', value: 'SD' }]),
+      zephyrTc('T3', [{ name: 'Module', value: 'FI' }]),
+      zephyrTc('T4', [{ name: 'Module', value: 'SD, FI' }]), // two values in one cell
+    ];
+    const gaps = analyzeZephyrGaps(tcs, metadata());
+    const mod = gaps.newProperties.find(p => p.name === 'Module')!;
+    expect(mod.uniqueValues.sort()).toEqual(['FI', 'SD']);
+    expect(mod.rowCount).toBe(5); // 1 + 1 + 1 + 2 observations, not 2 distinct
+  });
+
   it('accumulates distinct values for a new property across test cases', () => {
     const tcs = [
       zephyrTc('T1', [{ name: 'Region', value: 'EMEA' }]),

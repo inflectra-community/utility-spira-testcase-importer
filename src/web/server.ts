@@ -40,7 +40,14 @@ import {
   availableTargetsForField,
   DEFAULT_TEST_CASE_FIELDS,
 } from '../core/excel-mapping.js';
-import { extractColumnInfo, findMissingListValues, generateProvisionerConfig, inferFieldType } from '../provisioner/index.js';
+import {
+  extractColumnInfo,
+  findMissingListValues,
+  generateProvisionerConfig,
+  inferFieldType,
+  resolveNewFieldType,
+  type FieldMode,
+} from '../provisioner/index.js';
 import { applyProvisioning } from '../provisioner/apply.js';
 import type { SpiraConfig } from '../types/config.js';
 import type { TransformedTestCase } from '../types/transform.js';
@@ -482,6 +489,11 @@ export function createServer() {
               kind: 'new' as const,
               valueCount: p.uniqueValues.length,
               multiValued: p.multiValued,
+              // What "Auto" would create, so the UI can label the default choice.
+              suggestedType: resolveNewFieldType(
+                { columnName: p.name, uniqueValues: p.uniqueValues, rowCount: p.rowCount, multiValued: p.multiValued },
+                20,
+              ).type,
             })),
           ],
           testCaseCount: bundle.testCases.length,
@@ -702,7 +714,10 @@ export function createServer() {
     // Adapt Zephyr gaps to the provisioner module's input shapes.
     // The user can override list-vs-multilist per field via checkboxes. When no
     // override list is sent, fall back to what the data (and template) indicate.
-    const { multiSelect } = (req.body ?? {}) as { multiSelect?: string[] };
+    const { multiSelect, fieldTypes } = (req.body ?? {}) as {
+      multiSelect?: string[];
+      fieldTypes?: Record<string, FieldMode>;
+    };
     const isMulti = (name: string, dataDefault: boolean) =>
       Array.isArray(multiSelect) ? multiSelect.includes(name) : dataDefault;
 
@@ -711,6 +726,7 @@ export function createServer() {
       uniqueValues: p.uniqueValues,
       rowCount: p.rowCount,
       multiValued: isMulti(p.name, p.multiValued),
+      forceType: fieldTypes?.[p.name] ?? ('auto' as FieldMode),
     }));
     const missingValues = gaps.missingListValues.map(m => ({
       propertyName: m.propertyName,
@@ -737,8 +753,7 @@ export function createServer() {
     });
 
     const newFieldSummary = newColumns.map(col => {
-      const { type: inferred, variabilityScore } = inferFieldType(col, 20);
-      const type = inferred === 'list' && col.multiValued ? 'multilist' : inferred;
+      const { type, variabilityScore } = resolveNewFieldType(col, 20);
       return { name: col.columnName, type, variability: Math.round(variabilityScore * 100), uniqueValues: col.uniqueValues.length };
     });
     const missingValueSummary = missingValues.map(mv => ({
@@ -776,13 +791,16 @@ export function createServer() {
       res.json({ ok: true, empty: true, message: 'Nothing to apply — every field and value is already in the template.' });
       return;
     }
-    const { multiSelect } = (req.body ?? {}) as { multiSelect?: string[] };
+    const { multiSelect, fieldTypes } = (req.body ?? {}) as {
+      multiSelect?: string[];
+      fieldTypes?: Record<string, FieldMode>;
+    };
     const logger = createLogger();
     try {
       const s = loadSettings();
       const client = createSpiraClient(spiraConfigFromSettings(s), logger);
       await client.authenticate();
-      const result = await applyProvisioning(client, { gaps, metadata: session.metadata, multiSelect }, logger);
+      const result = await applyProvisioning(client, { gaps, metadata: session.metadata, multiSelect, fieldTypes }, logger);
       // When fields need a manual single→multi conversion, hand back a deep link
       // to the Spira template's Test Case custom-properties admin page.
       const adminUrl = result.manualConversions.length

@@ -313,19 +313,24 @@ async function generateProvisioner(endpoint, resultId, body) {
 $('provGenerate').addEventListener('click', () =>
   generateProvisioner('/api/excel/provisioner', 'provResult'));
 
-// Collects the fields whose "Multi-select" box is ticked.
-function tickedMultiSelect() {
-  return [...document.querySelectorAll('.zMulti')].filter((cb) => cb.checked).map((cb) => cb.dataset.field);
+// Collects the per-field type choices for NEW fields. "auto" is omitted so the
+// server's inference decides; only explicit overrides are sent.
+function chosenFieldTypes() {
+  const out = {};
+  document.querySelectorAll('.zType').forEach((sel) => {
+    if (sel.value !== 'auto') out[sel.dataset.field] = sel.value;
+  });
+  return out;
 }
 
 $('zProvGenerate').addEventListener('click', () =>
-  generateProvisioner('/api/zephyr/provisioner', 'zProvResult', { multiSelect: tickedMultiSelect() }));
+  generateProvisioner('/api/zephyr/provisioner', 'zProvResult', { fieldTypes: chosenFieldTypes() }));
 
 $('zProvApply').addEventListener('click', async () => {
   if (!confirm('This will add the listed values and fields directly to this Spira product\'s template. Continue?')) return;
   const resultEl = $('zProvResult');
   resultEl.innerHTML = '<div class="status warn">Applying to Spira…</div>';
-  const r = await api.post('/api/zephyr/provision-apply', { multiSelect: tickedMultiSelect() });
+  const r = await api.post('/api/zephyr/provision-apply', { fieldTypes: chosenFieldTypes() });
   if (!r.ok) { resultEl.innerHTML = `<div class="status err">${escapeHtml(r.error || 'Failed.')}</div>`; return; }
   if (r.empty) { resultEl.innerHTML = `<div class="status ok">${escapeHtml(r.message)}</div>`; return; }
 
@@ -448,18 +453,33 @@ function renderPlan(plan, opts) {
   $('zProvFields').innerHTML = fields.length
     ? '<table><thead><tr><th>Field</th><th>Values to add</th><th>Multi-select</th></tr></thead><tbody>' +
       fields.map((f) => {
-        // An existing single-select field can't be converted via the API — the
-        // checkbox would do nothing on apply. Show a manual-step note instead.
-        const multiCell = f.existingSingleSelect
-          ? '<span class="map-warn" title="Spira can\'t convert an existing field\'s type via the API">needs manual toggle</span>'
-          : `<input type="checkbox" class="zMulti" data-field="${escapeAttr(f.name)}"${f.multiValued ? ' checked' : ''} aria-label="Make ${escapeAttr(f.name)} a multi-select list" />`;
+        let typeCell;
+        if (f.kind === 'new') {
+          // A field that doesn't exist yet: the user picks how it's created.
+          const label = { text: 'free text', list: 'select list', multilist: 'multi-select' }[f.suggestedType] || f.suggestedType;
+          typeCell =
+            `<select class="zType" data-field="${escapeAttr(f.name)}" aria-label="Type for ${escapeAttr(f.name)}">` +
+            `<option value="auto" selected>Auto (${escapeHtml(label)})</option>` +
+            '<option value="text">Free text</option>' +
+            '<option value="list">Select list</option>' +
+            '<option value="multilist">Multi-select list</option>' +
+            '</select>';
+        } else if (f.existingSingleSelect && f.multiValued) {
+          // Existing single-select, but the source has several values per item.
+          // Spira can't change a field's type via the API.
+          typeCell = '<span class="map-warn" title="Spira can\'t convert an existing field\'s type via the API">single-select — needs manual toggle</span>';
+        } else if (f.existingSingleSelect) {
+          typeCell = '<span class="muted">existing single-select</span>';
+        } else {
+          typeCell = '<span class="muted">existing multi-select</span>';
+        }
         return `<tr><td>${escapeHtml(f.name)}${f.kind === 'new' ? ' <span class="muted">(new)</span>' : ''}</td>` +
-          `<td>${f.valueCount}</td><td>${multiCell}</td></tr>`;
+          `<td>${f.valueCount}</td><td>${typeCell}</td></tr>`;
       }).join('') +
       '</tbody></table>' +
-      '<p class="muted" style="margin-top:6px;">Tick <em>Multi-select</em> for new fields where a test case can have several values ' +
-      '(pre-ticked when this source has comma-separated values). Existing fields marked ' +
-      '<em>needs manual toggle</em> must be changed to Multi-Select in Spira\'s admin UI — the API can\'t convert them.</p>'
+      '<p class="muted" style="margin-top:6px;">For new fields, choose <em>Free text</em> to keep the source values exactly as typed, ' +
+      'or a list type to give users a controlled set of values. Existing fields keep their current type — ' +
+      'Spira can\'t change it through the API.</p>'
     : '';
 
   const vKind = plan.validationErrors > 0 ? 'err' : 'ok';

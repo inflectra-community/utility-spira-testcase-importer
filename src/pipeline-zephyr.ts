@@ -575,7 +575,12 @@ export interface ZephyrNewProperty {
   name: string;
   /** Distinct non-empty values observed across all test cases */
   uniqueValues: string[];
-  /** How many test cases carried a value for this property */
+  /**
+   * How many values were observed for this property across all test cases,
+   * counting repeats (a cell like "DE, HU" contributes two). Together with
+   * uniqueValues this gives the cardinality ratio used to tell a controlled
+   * vocabulary (few distinct values, seen often) from free text.
+   */
   rowCount: number;
   /**
    * True if any source row held more than one value for this property
@@ -627,6 +632,8 @@ export function analyzeZephyrGaps(
 ): ZephyrGapAnalysis {
   // Accumulate, per unmatched CP name, the set of values seen.
   const newProps = new Map<string, Set<string>>();
+  // Total values observed (with repeats) per new property, for the cardinality ratio.
+  const newPropOccurrences = new Map<string, number>();
   // Tracks whether ANY row's raw value for a property name was comma-separated.
   const multiValuedProps = new Set<string>();
   // Per existing list CP name, the set of values seen that aren't in the list.
@@ -668,6 +675,7 @@ export function analyzeZephyrGaps(
         // New property — accumulate each of its values.
         if (!newProps.has(cpName)) newProps.set(cpName, new Set());
         for (const v of values) newProps.get(cpName)!.add(v);
+        newPropOccurrences.set(cpName, (newPropOccurrences.get(cpName) ?? 0) + values.length);
         continue;
       }
 
@@ -691,7 +699,7 @@ export function analyzeZephyrGaps(
   const newProperties: ZephyrNewProperty[] = [...newProps.entries()].map(([name, values]) => ({
     name,
     uniqueValues: [...values],
-    rowCount: values.size,
+    rowCount: newPropOccurrences.get(name) ?? values.size,
     multiValued: multiValuedProps.has(name),
   }));
 

@@ -32,6 +32,55 @@ export interface UnmatchedColumnInfo {
    * a single-select `list`. Only affects columns inferred to be lists.
    */
   multiValued?: boolean;
+  /**
+   * User override for the field type. `auto` (or absent) lets inference decide;
+   * anything else forces that type regardless of what the values look like.
+   */
+  forceType?: FieldMode;
+}
+
+/** How a NEW custom field should be created. `auto` = infer from the values. */
+export type FieldMode = 'auto' | 'text' | 'list' | 'multilist';
+
+/**
+ * Decides the type (and list values) for a field the provisioner will CREATE.
+ * Single source of truth for the export file, the direct apply, and the UI summary.
+ *
+ *  - forceType text      → free text, no list (values stay verbatim in test cases)
+ *  - forceType list      → single-select list seeded with the distinct values
+ *  - forceType multilist → multi-select list seeded with the distinct values
+ *  - auto / absent       → inferFieldType decides; a list becomes multilist when
+ *                          the data held several values per item
+ */
+export function resolveNewFieldType(
+  column: UnmatchedColumnInfo,
+  threshold: number,
+): { type: string; values?: string[]; variabilityScore: number } {
+  const inferred = inferFieldType(column, threshold);
+  const mode = column.forceType ?? 'auto';
+
+  if (mode === 'text') {
+    return { type: 'text', variabilityScore: inferred.variabilityScore };
+  }
+  if (mode === 'list' || mode === 'multilist') {
+    return {
+      type: mode,
+      values: [...column.uniqueValues].sort(),
+      variabilityScore: inferred.variabilityScore,
+    };
+  }
+  // auto
+  if (column.multiValued) {
+    // A cell that holds several values ("6021, 6022") can't live in a scalar
+    // field. Inference looks at the split values (all numeric, say) and would
+    // pick integer, which then rejects the real cells. Lists become
+    // multi-select; every other scalar falls back to free text.
+    if (inferred.type === 'list') {
+      return { type: 'multilist', values: inferred.values, variabilityScore: inferred.variabilityScore };
+    }
+    return { type: 'text', variabilityScore: inferred.variabilityScore };
+  }
+  return { type: inferred.type, values: inferred.values, variabilityScore: inferred.variabilityScore };
 }
 
 /**
@@ -161,11 +210,9 @@ export function generateProvisionerConfig(config: ProvisionerExportConfig): Reco
 
   // New custom properties
   for (const column of config.newColumns) {
-    const inferred = inferFieldType(column, threshold);
-    // A column inferred as a list becomes a multi-select if it holds multiple values per item.
-    const type = inferred.type === 'list' && column.multiValued ? 'multilist' : inferred.type;
+    const { type, values } = resolveNewFieldType(column, threshold);
     const field: Record<string, unknown> = { name: column.columnName, type };
-    if (inferred.values) field.values = inferred.values;
+    if (values) field.values = values;
     customFields.push(field);
   }
 

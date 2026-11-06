@@ -95,6 +95,78 @@ describe('applyProvisioning', () => {
     expect(res.propertiesCreated[0]).toMatchObject({ name: 'Region', type: 'multilist' });
   });
 
+  describe('per-field type switch (fieldTypes)', () => {
+    const codes = Array.from({ length: 40 }, (_, i) => `ZTX${String(i).padStart(3, '0')}/ALT_${i * 7}`);
+    const txGap = { name: 'Transaction Code', uniqueValues: codes, rowCount: 60, multiValued: true };
+
+    it('Free text: creates a plain text property and no list, even for multi-valued data', async () => {
+      const client = mockClient();
+      const res = await applyProvisioning(client, {
+        metadata: metadata(),
+        gaps: gaps({ newProperties: [txGap] }),
+        fieldTypes: { 'Transaction Code': 'text' },
+      }, logger);
+
+      expect(client.createCustomList).not.toHaveBeenCalled();
+      expect(client.createCustomProperty).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Transaction Code', customPropertyTypeId: 1 }),
+      );
+      expect(res.propertiesCreated[0].type).toBe('text');
+    });
+
+    it('Select list: creates a single-select list seeded with every distinct value', async () => {
+      const client = mockClient();
+      const res = await applyProvisioning(client, {
+        metadata: metadata(),
+        gaps: gaps({ newProperties: [txGap] }),
+        fieldTypes: { 'Transaction Code': 'list' },
+      }, logger);
+
+      expect(client.createCustomList).toHaveBeenCalledWith('Transaction Code', [...codes].sort());
+      expect(client.createCustomProperty).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Transaction Code', customPropertyTypeId: 6, customListId: 999 }),
+      );
+      expect(res.propertiesCreated[0].type).toBe('list');
+    });
+
+    it('Multi-select list: creates a multi-select (type 7) list', async () => {
+      const client = mockClient();
+      await applyProvisioning(client, {
+        metadata: metadata(),
+        gaps: gaps({ newProperties: [txGap] }),
+        fieldTypes: { 'Transaction Code': 'multilist' },
+      }, logger);
+
+      expect(client.createCustomProperty).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Transaction Code', customPropertyTypeId: 7, customListId: 999 }),
+      );
+    });
+
+    it('Auto (or no choice) keeps the inferred type — high-cardinality codes become text', async () => {
+      const client = mockClient();
+      const res = await applyProvisioning(client, {
+        metadata: metadata(),
+        gaps: gaps({ newProperties: [txGap] }),
+      }, logger);
+
+      expect(res.propertiesCreated[0].type).toBe('text');
+      expect(client.createCustomList).not.toHaveBeenCalled();
+    });
+
+    it('does not apply to existing fields: their type is never changed', async () => {
+      const client = mockClient();
+      const res = await applyProvisioning(client, {
+        metadata: metadata(), // "Country" exists as a single-select list
+        gaps: gaps({ missingListValues: [{ propertyName: 'Country', existingValues: ['DE'], missingValues: ['HU'], multiValued: false }] }),
+        fieldTypes: { Country: 'text' }, // ignored: Country already exists
+      }, logger);
+
+      expect(client.createCustomProperty).not.toHaveBeenCalled();
+      expect(client.addCustomListValues).toHaveBeenCalledWith(44, ['HU']);
+      expect(res.propertiesCreated).toEqual([]);
+    });
+  });
+
   it('creates a free-text property without a backing list', async () => {
     const client = mockClient();
     // Many unique, long-ish values → inferred as text, no list created.
