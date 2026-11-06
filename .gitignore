@@ -155,3 +155,6 @@ input/*
 
 # Web UI local settings store (contains credentials)
 data/settings.json
+
+# Test set link plans (local state: members waiting for their test case)
+data/link-plans/

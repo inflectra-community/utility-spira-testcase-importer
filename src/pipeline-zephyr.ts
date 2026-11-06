@@ -29,6 +29,7 @@ import { parseZephyrBundle, type ZephyrBundleResult, type ZephyrAttachmentRef } 
 import { uploadAttachments, type PendingAttachment } from './importer/attachment-handler.js';
 import { importTestSet, type TestSetImportResult } from './importer/test-set-importer.js';
 import { createTestSetFolderResolver } from './importer/test-set-folder-resolver.js';
+import { syncLinkPlan, type CreatedTestSetLinks } from './importer/link-plan.js';
 
 /**
  * Runs the Zephyr bundle import pipeline.
@@ -232,6 +233,7 @@ export async function runZephyrPipeline(
   // Phase 7.5: Create Test Sets from the Zephyr cycle(s). A nested-format
   // project may contain several cycles; each becomes its own Spira Test Set.
   const testSetResults: TestSetImportResult[] = [];
+  const createdForLinks: CreatedTestSetLinks[] = [];
   if (bundleResult.testSets.length > 0) {
     // Build Zephyr key → created Spira test case ID.
     // In dry-run no test cases are created, so use the row index as a placeholder
@@ -281,13 +283,51 @@ export async function runZephyrPipeline(
           process.stdout.write(`    ${DIM}${i + 1}. ${key}${RESET}\n`);
         });
         if (testSetResult.membersSkipped > 0) {
-          process.stdout.write(`    ${YELLOW}${testSetResult.membersSkipped} member(s) would be skipped${RESET}\n`);
+          process.stdout.write(`    ${YELLOW}${testSetResult.membersSkipped} member(s) would be deferred to the link plan${RESET}\n`);
         }
       } else {
         process.stdout.write(`  Test Set: "${testSetResult.testSetName}" created ` +
           `(${testSetResult.membersAdded} members` +
-          `${testSetResult.membersSkipped > 0 ? `, ${testSetResult.membersSkipped} skipped` : ''}` +
+          `${testSetResult.membersSkipped > 0 ? `, ${testSetResult.membersSkipped} to link later` : ''}` +
           `${testSetResult.orderingApplied ? ', ordered' : ''})\n`);
+      }
+
+      if (testSetResult.testSetId !== undefined && !testSetResult.error) {
+        createdForLinks.push({
+          testSetId: testSetResult.testSetId,
+          testSetName: testSetResult.testSetName,
+          orderedKeys: testSet.memberKeys,
+          deferredKeys: testSetResult.deferredKeys,
+        });
+      }
+    }
+
+    // Members whose test case isn't in this run (e.g. another project's) are not
+    // dropped: save them to the product's link plan and link whatever already exists.
+    if (!config.dryRun) {
+      try {
+        const sync = await syncLinkPlan(spiraClient, logger, config.spira.projectId, createdForLinks);
+        const linked = sync.resolved.reduce((n, r) => n + r.linked.length, 0);
+        if (linked > 0) {
+          process.stdout.write(`  ${GREEN}Linked ${linked} test set member(s) to test cases already in this product.${RESET}\n`);
+        }
+        if (sync.pendingTotal > 0) {
+          process.stdout.write(
+            `  ${YELLOW}${sync.pendingTotal} test set member(s) are waiting for their test case. ` +
+            `They will be linked on the next import into this product.${RESET}\n` +
+            `  ${DIM}Link plan: ${sync.planFile}${RESET}\n`,
+          );
+        }
+      } catch (err) {
+        logger.warn(`Could not update the test set link plan: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      const deferredCount = testSetResults.reduce((n, r) => n + r.deferredKeys.length, 0);
+      if (deferredCount > 0) {
+        process.stdout.write(
+          `  ${YELLOW}${deferredCount} test set member(s) belong to test cases not in this bundle; ` +
+          `a real import saves them to a link plan.${RESET}\n`,
+        );
       }
     }
   }

@@ -49,6 +49,13 @@ import {
   type FieldMode,
 } from '../provisioner/index.js';
 import { applyProvisioning } from '../provisioner/apply.js';
+import {
+  loadLinkPlan,
+  saveLinkPlan,
+  resolveLinkPlan,
+  syncLinkPlan,
+  type CreatedTestSetLinks,
+} from '../importer/link-plan.js';
 import type { SpiraConfig } from '../types/config.js';
 import type { TransformedTestCase } from '../types/transform.js';
 import type { ZephyrBundleResult } from '../parser/zephyr-bundle.js';
@@ -537,12 +544,18 @@ export function createServer() {
             folder: tc.folderPath ?? '(root)',
             steps: tc.testSteps.length,
           })),
-          testSets: bundle.testSets.map(ts => ({
-            name: ts.name,
-            folder: ts.folderPath ?? '(root)',
-            members: resolvableMembers(ts),
-            skipped: ts.memberKeys.length - resolvableMembers(ts).length,
-          })),
+          testSets: bundle.testSets.map(ts => {
+            const deferred = ts.memberKeys.filter(k => !keyToRowIndex.has(k));
+            return {
+              name: ts.name,
+              folder: ts.folderPath ?? '(root)',
+              members: resolvableMembers(ts),
+              // Members whose test case isn't in this bundle (usually another project's).
+              // They are recorded in the link plan and linked once those test cases exist.
+              skipped: deferred.length,
+              deferredProjects: [...new Set(deferred.map(k => k.split('-')[0]))].sort(),
+            };
+          }),
           // Components the source uses that aren't in the Spira Components field.
           // These must be added manually (not provisionable), so flag them here.
           missingComponents: gaps.missingComponents,
@@ -912,9 +925,13 @@ export function createServer() {
         name: string;
         membersAdded: number;
         membersSkipped: number;
+        deferred: number;
         ordered: boolean;
         error?: string;
       }> = [];
+      // Test Sets created in this run, with any members that couldn't be linked yet.
+      const createdForLinks: CreatedTestSetLinks[] = [];
+      let linking: unknown;
       const testSets = session.bundle?.testSets ?? [];
       if (testSets.length > 0 && session.keyToRowIndex) {
         const keyToTestCaseId = new Map<string, number>();
@@ -947,9 +964,47 @@ export function createServer() {
             name: tsr.testSetName,
             membersAdded: tsr.membersAdded,
             membersSkipped: tsr.membersSkipped,
+            deferred: tsr.deferredKeys.length,
             ordered: tsr.orderingApplied,
             error: tsr.error,
           });
+          if (tsr.testSetId !== undefined && !tsr.error) {
+            createdForLinks.push({
+              testSetId: tsr.testSetId,
+              testSetName: tsr.testSetName,
+              orderedKeys: testSet.memberKeys,
+              deferredKeys: tsr.deferredKeys,
+            });
+          }
+        }
+
+        if (dryRun) {
+          // Nothing is created in a dry run, so just preview what would be deferred.
+          linking = {
+            preview: true,
+            deferred: testSetSummaries
+              .filter(t => t.deferred > 0)
+              .map(t => ({ testSetName: t.name, count: t.deferred })),
+          };
+        } else {
+          // Record deferred members in the product's link plan and complete
+          // anything that can be linked now. A failure here must not fail the import.
+          send('phase', { message: 'Checking the test set link plan' });
+          try {
+            const sync = await syncLinkPlan(client, logger, s.spira.projectId, createdForLinks);
+            linking = {
+              preview: false,
+              deferred: sync.deferred.map(d => ({ testSetName: d.testSetName, count: d.keys.length })),
+              linked: sync.resolved
+                .filter(r => r.linked.length > 0)
+                .map(r => ({ testSetName: r.testSetName, count: r.linked.length })),
+              pendingTotal: sync.pendingTotal,
+              warnings: sync.resolved.flatMap(r => r.warnings).slice(0, 10),
+              errors: sync.resolved.filter(r => r.error).map(r => `${r.testSetName}: ${r.error}`),
+            };
+          } catch (err) {
+            linking = { preview: false, error: err instanceof Error ? err.message : String(err) };
+          }
         }
       }
 
@@ -963,6 +1018,7 @@ export function createServer() {
         failures: importResult.failures.slice(0, 20),
         attachments: attachSummary,
         testSets: testSetSummaries,
+        linking,
         // Back-compat: expose the first set under the old key too.
         testSet: testSetSummaries[0],
       });
@@ -970,6 +1026,55 @@ export function createServer() {
       send('error', { message: err instanceof Error ? err.message : String(err) });
     } finally {
       res.end();
+    }
+  });
+
+  // ── Test set link plan: members waiting for their test case to exist ────────
+  // Summarises the plan for the product the app is currently bound to. Local
+  // file only — no Spira call.
+  const summarisePlan = (entries: ReturnType<typeof loadLinkPlan>['entries']) =>
+    entries.map(e => ({
+      testSetId: e.testSetId,
+      testSetName: e.testSetName,
+      pendingCount: e.pendingKeys.length,
+      projects: [...new Set(e.pendingKeys.map(k => k.split('-')[0]))].sort(),
+      sample: e.pendingKeys.slice(0, 8),
+    }));
+
+  app.get('/api/link-plan', (_req, res) => {
+    const s = loadSettings();
+    if (!isConfigured(s)) { res.json({ ok: true, entries: [], pendingTotal: 0 }); return; }
+    const plan = loadLinkPlan(s.spira.projectId);
+    res.json({
+      ok: true,
+      productId: s.spira.projectId,
+      entries: summarisePlan(plan.entries),
+      pendingTotal: plan.entries.reduce((n, e) => n + e.pendingKeys.length, 0),
+    });
+  });
+
+  // Link whatever can be linked now (e.g. after the other project was imported).
+  app.post('/api/link-plan/resolve', async (_req, res) => {
+    const s = loadSettings();
+    if (!isConfigured(s)) { res.status(400).json({ ok: false, error: 'Configure Spira settings first.' }); return; }
+    const logger = createLogger();
+    try {
+      const client = createSpiraClient(spiraConfigFromSettings(s), logger);
+      await client.authenticate();
+      const outcome = await resolveLinkPlan(client, logger, loadLinkPlan(s.spira.projectId));
+      saveLinkPlan(outcome.plan);
+      res.json({
+        ok: true,
+        linked: outcome.results
+          .filter(r => r.linked.length > 0)
+          .map(r => ({ testSetName: r.testSetName, count: r.linked.length })),
+        warnings: outcome.results.flatMap(r => r.warnings).slice(0, 10),
+        errors: outcome.results.filter(r => r.error).map(r => `${r.testSetName}: ${r.error}`),
+        entries: summarisePlan(outcome.plan.entries),
+        pendingTotal: outcome.plan.entries.reduce((n, e) => n + e.pendingKeys.length, 0),
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
   });
 

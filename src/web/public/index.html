@@ -140,6 +140,12 @@
 
   <!-- IMPORT -->
   <section id="tab-import" class="hidden">
+    <!-- Test set members waiting for their test case to exist (shown only when there are some) -->
+    <div class="card hidden" id="linkPlanCard">
+      <h2>Pending test set links</h2>
+      <div id="linkPlanBody"></div>
+    </div>
+
     <div class="card">
       <h2>1. Choose a source</h2>
       <p class="muted">Upload a Zephyr Scale bundle (zip the folder) or an Excel file (<code>.xlsx</code>), or select one already in <code>input/</code>.</p>

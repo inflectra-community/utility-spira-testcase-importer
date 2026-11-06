@@ -49,7 +49,15 @@ export interface TestSetImportResult {
   testSetId?: number;
   testSetName: string;
   membersAdded: number;
+  /** Members that couldn't be linked now (same as deferredKeys.length). */
   membersSkipped: number;
+  /**
+   * Zephyr keys of members with no Spira test case in this run — typically test
+   * cases that belong to another project in the same export. They are NOT lost:
+   * the caller records them in a link plan and links them once those test cases
+   * exist in the product.
+   */
+  deferredKeys: string[];
   orderingApplied: boolean;
   foldersCreated: string[];
   warnings: string[];
@@ -73,6 +81,7 @@ export async function importTestSet(
     testSetName: testSet.name,
     membersAdded: 0,
     membersSkipped: 0,
+    deferredKeys: [],
     orderingApplied: false,
     foldersCreated: [],
     warnings: [],
@@ -100,7 +109,8 @@ export async function importTestSet(
         logger.info(`[dry-run]   ${position}. ${key}`);
       } else {
         result.membersSkipped++;
-        result.warnings.push(`Member "${key}" would be skipped (test case not imported).`);
+        result.deferredKeys.push(key);
+        result.warnings.push(`Member "${key}" has no test case in this run — would be deferred to the link plan.`);
       }
       position++;
     }
@@ -140,8 +150,10 @@ export async function importTestSet(
     for (const key of testSet.memberKeys) {
       const testCaseId = keyToTestCaseId.get(key);
       if (testCaseId === undefined) {
+        // Not lost: recorded as deferred so it can be linked when the test case exists.
         result.membersSkipped++;
-        result.warnings.push(`Member "${key}" was not imported — skipped from Test Set.`);
+        result.deferredKeys.push(key);
+        result.warnings.push(`Member "${key}" has no test case yet — deferred to the link plan.`);
         continue;
       }
       await client.addTestCaseToSet(created.TestSetId, testCaseId);
@@ -174,7 +186,7 @@ export async function importTestSet(
  * Re-reads the current mappings (to obtain TestSetTestCaseId values),
  * assigns Position by the order of orderedTestCaseIds, then PUTs them back.
  */
-async function applyOrdering(
+export async function applyOrdering(
   client: SpiraApiClient,
   testSetId: number,
   orderedTestCaseIds: number[],

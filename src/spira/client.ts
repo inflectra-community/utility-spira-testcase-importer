@@ -96,6 +96,15 @@ export interface SpiraApiClient {
   /** Creates a new active component in the project. Returns the created component. */
   createComponent(name: string): Promise<Component>;
   getTestFolders(): Promise<TestCaseFolder[]>;
+  /**
+   * One page of the project's test cases (id, name, description). `startingRow`
+   * is 1-based. Used to find test cases by the `[Source: KEY]` tag the importer
+   * writes into each description.
+   */
+  getTestCasesPage(
+    startingRow: number,
+    numberOfRows: number,
+  ): Promise<Array<{ testCaseId: number; name: string; description?: string }>>;
   createTestFolder(folder: CreateFolderRequest): Promise<TestCaseFolder>;
   createTestCase(testCase: CreateTestCaseRequest): Promise<{ TestCaseId: number }>;
   addTestSteps(testCaseId: number, steps: CreateTestStepRequest[]): Promise<void>;
@@ -477,6 +486,25 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
   }
 
   /**
+   * One page of test cases.
+   * GET /projects/{project_id}/test-cases?starting_row=&number_of_rows=
+   */
+  async function getTestCasesPage(
+    startingRow: number,
+    numberOfRows: number,
+  ): Promise<Array<{ testCaseId: number; name: string; description?: string }>> {
+    const raw = await request<any[]>(
+      'GET',
+      `/projects/${config.projectId}/test-cases?starting_row=${startingRow}&number_of_rows=${numberOfRows}`,
+    );
+    return (raw ?? []).map(t => ({
+      testCaseId: t.TestCaseId ?? t.testCaseId,
+      name: t.Name ?? t.name ?? '',
+      description: t.Description ?? t.description ?? undefined,
+    }));
+  }
+
+  /**
    * Retrieves all test case folders in the project.
    */
   async function getTestFolders(): Promise<TestCaseFolder[]> {
@@ -656,6 +684,7 @@ export function createSpiraClient(config: SpiraConfig, logger: Logger): SpiraApi
     getComponents,
     createComponent,
     getTestFolders,
+    getTestCasesPage,
     createTestFolder,
     createTestCase,
     addTestSteps,

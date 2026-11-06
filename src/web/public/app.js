@@ -20,9 +20,63 @@ document.querySelectorAll('nav button').forEach((btn) => {
     btn.classList.add('active');
     $('tab-settings').classList.toggle('hidden', btn.dataset.tab !== 'settings');
     $('tab-import').classList.toggle('hidden', btn.dataset.tab !== 'import');
-    if (btn.dataset.tab === 'import') refreshFiles();
+    if (btn.dataset.tab === 'import') { refreshFiles(); refreshLinkPlan(); }
   });
 });
+
+// ── Pending test set links ─────────────────────────────────────────────────
+// Test Sets can contain test cases from another project in the same export.
+// Those members are saved in a link plan and linked once the test cases exist.
+function renderLinkPlan(data, justLinked) {
+  const card = $('linkPlanCard');
+  const entries = (data && data.entries) || [];
+  if (!entries.length) {
+    // Nothing waiting. Only show the card if we just finished linking something.
+    if (justLinked && justLinked.length) {
+      card.classList.remove('hidden');
+      $('linkPlanBody').innerHTML = '<div class="status ok">All pending test set members are now linked.</div>';
+    } else {
+      card.classList.add('hidden');
+      $('linkPlanBody').innerHTML = '';
+    }
+    return;
+  }
+  card.classList.remove('hidden');
+  const rows = entries.map((e) =>
+    `<tr><td>${escapeHtml(e.testSetName)}</td><td>${e.pendingCount}</td>` +
+    `<td>${escapeHtml(e.projects.join(', '))}</td>` +
+    `<td class="muted">${escapeHtml(e.sample.join(', '))}${e.pendingCount > e.sample.length ? ' …' : ''}</td></tr>`).join('');
+  $('linkPlanBody').innerHTML =
+    `<div class="status warn"><strong>${data.pendingTotal} test set member(s)</strong> are waiting for their test case ` +
+    `to be imported into this product. They'll be linked automatically after the next import, or you can check now.</div>` +
+    '<table class="map-table" style="margin-top:8px;"><thead><tr><th>Test Set</th><th>Waiting</th><th>From project</th><th>Test cases</th></tr></thead>' +
+    `<tbody>${rows}</tbody></table>` +
+    '<button class="ghost" id="linkPlanResolveBtn" style="margin-top:10px;">Check &amp; link now</button>' +
+    '<div id="linkPlanResult" style="margin-top:8px;"></div>';
+  $('linkPlanResolveBtn').addEventListener('click', async () => {
+    const out = $('linkPlanResult');
+    out.innerHTML = '<div class="status warn">Checking Spira…</div>';
+    const r = await api.post('/api/link-plan/resolve', {});
+    if (!r.ok) { out.innerHTML = `<div class="status err">${escapeHtml(r.error || 'Failed.')}</div>`; return; }
+    const linkedTotal = r.linked.reduce((n, l) => n + l.count, 0);
+    renderLinkPlan({ entries: r.entries, pendingTotal: r.pendingTotal }, r.linked);
+    if (r.entries.length || linkedTotal) {
+      const msg = linkedTotal
+        ? `Linked ${linkedTotal} member(s)${r.pendingTotal ? `; ${r.pendingTotal} still waiting` : ''}.`
+        : 'Nothing could be linked yet — the test cases for those members aren\'t in this product.';
+      const el = $('linkPlanResult');
+      if (el) el.innerHTML = `<div class="status ${linkedTotal ? 'ok' : 'warn'}">${escapeHtml(msg)}</div>`;
+    }
+    if (r.errors && r.errors.length) {
+      const el = $('linkPlanResult');
+      if (el) el.innerHTML += `<div class="status err" style="margin-top:6px;">${r.errors.map(escapeHtml).join('<br>')}</div>`;
+    }
+  });
+}
+
+async function refreshLinkPlan() {
+  try { renderLinkPlan(await api.get('/api/link-plan')); } catch { /* best effort */ }
+}
 
 function setStatus(el, kind, msg) {
   el.innerHTML = `<div class="status ${kind}">${msg}</div>`;
@@ -522,14 +576,20 @@ function renderPlan(plan, opts) {
       : '';
     $('planTestSet').innerHTML = heading + testSets.map((ts) => {
       const items = ts.members.map((k) => `<li>${escapeHtml(k)}</li>`).join('');
+      const from = (ts.deferredProjects || []).join(', ');
       const skipNote = ts.skipped
-        ? ` <span class="map-warn">${ts.skipped} from other projects skipped</span>`
+        ? ` <span class="map-warn">${ts.skipped} to link later</span>`
+        : '';
+      const deferNote = ts.skipped
+        ? `<p class="map-warn" style="margin:8px 0 0;">${ts.skipped} member(s) are test cases from ` +
+          `${from ? escapeHtml(from) : 'another project'}, which aren't in this import. They are saved in a link plan and ` +
+          `linked automatically once those test cases are imported into this product.</p>`
         : '';
       return `<details class="boxout">` +
         `<summary>Test Set: ${escapeHtml(ts.name)}` +
         `<span class="sum-meta">${ts.members.length} member(s)${skipNote ? ' · ' + skipNote : ''}</span></summary>` +
         `<div class="boxout-body">` +
-        `<span class="muted">Folder: ${escapeHtml(ts.folder)}</span>` +
+        `<span class="muted">Folder: ${escapeHtml(ts.folder)}</span>${deferNote}` +
         `<ol class="member-order">${items}</ol></div></details>`;
     }).join('');
   } else {
@@ -583,8 +643,29 @@ function runImport(dryRun) {
     for (const ts of doneSets) {
       html += `<br>Test Set "${escapeHtml(ts.name)}": ${ts.membersAdded} members` +
         (ts.ordered ? ' (ordered)' : '') +
-        (ts.membersSkipped ? `, ${ts.membersSkipped} skipped` : '') +
+        (ts.membersSkipped ? `, ${ts.membersSkipped} to link later` : '') +
         (ts.error ? ` — ERROR: ${escapeHtml(ts.error)}` : '');
+    }
+    // What happened to members whose test case isn't in this import yet.
+    const lk = d.linking;
+    if (lk) {
+      const count = (xs) => (xs || []).reduce((n, x) => n + x.count, 0);
+      if (lk.error) {
+        html += `<br><span class="map-warn">Link plan could not be checked: ${escapeHtml(lk.error)}</span>`;
+      } else if (lk.preview) {
+        const n = count(lk.deferred);
+        if (n) html += `<br><span class="map-warn">${n} test set member(s) belong to test cases not in this import; ` +
+          'a real import saves them to a link plan and links them once those test cases exist.</span>';
+      } else {
+        const linked = count(lk.linked);
+        const deferredNow = count(lk.deferred);
+        if (linked) html += `<br>Linked ${linked} test set member(s) to test cases already in this product.`;
+        if (lk.pendingTotal) {
+          html += `<br><span class="map-warn">${lk.pendingTotal} member(s) still waiting for their test case` +
+            `${deferredNow ? ' (saved to the link plan)' : ''} — they'll be linked automatically after the next import.</span>`;
+        }
+        if (lk.errors && lk.errors.length) html += `<br><span class="map-warn">${lk.errors.map(escapeHtml).join('<br>')}</span>`;
+      }
     }
     if (d.attachments) html += `<br>Attachments: ${d.attachments.uploaded} uploaded, ${d.attachments.skipped} skipped, ${d.attachments.failed} failed`;
     html += '</div>';
@@ -610,6 +691,8 @@ function runImport(dryRun) {
     $('resultSummary').innerHTML = html;
     logLine('✓ done');
     es.close();
+    // The import may have added to, or completed, the link plan.
+    if (!d.dryRun) refreshLinkPlan();
     $('importBtn').disabled = false;
     $('dryRunBtn').disabled = false;
 

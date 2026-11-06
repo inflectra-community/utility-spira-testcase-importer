@@ -16,6 +16,7 @@ function createMockClient(overrides?: Partial<SpiraApiClient>): SpiraApiClient {
     authenticate: vi.fn().mockResolvedValue(undefined),
     getProjectInfo: vi.fn().mockResolvedValue({ productName: 'Product', programName: 'Program' }),
     getTemplateId: vi.fn().mockReturnValue(1),
+    getTestCasesPage: vi.fn().mockResolvedValue([]),
     getCustomProperties: vi.fn().mockResolvedValue([]),
     addCustomListValues: vi.fn().mockResolvedValue([]),
     createCustomList: vi.fn().mockResolvedValue({ customListId: 1 }),
